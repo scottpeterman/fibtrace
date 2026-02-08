@@ -24,7 +24,7 @@ import json
 import re
 import logging
 from datetime import timedelta
-from ipaddress import IPv4Network, IPv4Address
+from ipaddress import IPv4Network, IPv4Address, IPv6Network, IPv6Address
 from typing import Optional, Any
 
 from .models import (
@@ -72,24 +72,30 @@ def _safe_json(raw: str) -> Optional[dict]:
         return None
 
 
-def _safe_ip(addr_str: str) -> Optional[IPv4Address]:
-    """Parse an IPv4 address, return None on failure."""
+def _safe_ip(addr_str: str) -> Optional[IPv4Address | IPv6Address]:
+    """Parse an IPv4 or IPv6 address, return None on failure."""
     if not addr_str:
         return None
     try:
         return IPv4Address(addr_str.strip())
     except (ValueError, AttributeError):
-        return None
+        try:
+            return IPv6Address(addr_str.strip())
+        except (ValueError, AttributeError):
+            return None
 
 
-def _safe_network(prefix_str: str) -> Optional[IPv4Network]:
-    """Parse an IPv4 network, return None on failure."""
+def _safe_network(prefix_str: str) -> Optional[IPv4Network | IPv6Network]:
+    """Parse an IPv4 or IPv6 network, return None on failure."""
     if not prefix_str:
         return None
     try:
         return IPv4Network(prefix_str.strip(), strict=False)
     except (ValueError, AttributeError):
-        return None
+        try:
+            return IPv6Network(prefix_str.strip(), strict=False)
+        except (ValueError, AttributeError):
+            return None
 
 
 def _normalize_mac(mac_str: str) -> Optional[str]:
@@ -444,6 +450,117 @@ class AristaEOSParser:
 
         except (KeyError, TypeError, IndexError) as e:
             logger.debug(f"EOS MAC table parse error: {e}")
+            return None
+
+    @staticmethod
+    def parse_nd(raw: str, target_ip: str = "") -> Optional[ArpEntry]:
+        """
+        Parse: show ipv6 neighbors {next_hop} | json
+
+        Real output from EOS:
+        {
+          "ipV6Neighbors": [
+            {
+              "address": "fe80::205:86ff:fe71:5b01",
+              "age": 2422,
+              "hwAddress": "0005.8671.5b01",
+              "interface": "Et1"
+            }
+          ]
+        }
+
+        Note: EOS uses dotted-quad MAC format (0005.8671.5b01).
+        _normalize_mac handles the conversion.
+        """
+        data = _safe_json(raw)
+        if data is None:
+            return None
+
+        try:
+            neighbors = data.get("ipV6Neighbors", [])
+            if not neighbors:
+                return None
+
+            # Find matching entry or take first
+            entry = None
+            if target_ip:
+                for n in neighbors:
+                    if n.get("address", "") == target_ip:
+                        entry = n
+                        break
+            if entry is None:
+                if target_ip and neighbors:
+                    # Target not found — incomplete
+                    return ArpEntry(
+                        ip_address=_safe_ip(target_ip),
+                        state=ArpState.INCOMPLETE,
+                    )
+                entry = neighbors[0] if neighbors else None
+            if entry is None:
+                return None
+
+            ip_addr = _safe_ip(entry.get("address", ""))
+            hw_addr = entry.get("hwAddress", "")
+            normalized = _normalize_mac(hw_addr)
+
+            if not hw_addr or hw_addr == "00:00:00:00:00:00":
+                state = ArpState.INCOMPLETE
+                mac = None
+            else:
+                state = ArpState.RESOLVED
+                mac = MacAddress(address=normalized) if normalized else None
+
+            age_secs = entry.get("age")
+            age = timedelta(seconds=age_secs) if age_secs is not None else None
+
+            return ArpEntry(
+                ip_address=ip_addr,
+                mac=mac,
+                state=state,
+                age=age,
+                interface=entry.get("interface"),
+            )
+
+        except (KeyError, TypeError, IndexError) as e:
+            logger.debug(f"EOS ND parse error: {e}")
+            return None
+
+    @staticmethod
+    def search_arp_by_mac(raw: str, target_mac: str) -> Optional[ArpEntry]:
+        """
+        Search full ARP table for an entry matching this MAC address.
+
+        Uses 'show ip arp | json' output (ipV4Neighbors list).
+        Searches by hwAddress instead of by IP — the cross-AF resolver.
+        """
+        data = _safe_json(raw)
+        if data is None:
+            return None
+
+        try:
+            neighbors = data.get("ipV4Neighbors", [])
+            if not neighbors:
+                return None
+
+            normalized_target = _normalize_mac(target_mac)
+            if not normalized_target:
+                return None
+
+            for entry in neighbors:
+                hw_addr = entry.get("hwAddress", "")
+                if _normalize_mac(hw_addr) == normalized_target:
+                    ip_addr = _safe_ip(entry.get("address", ""))
+                    return ArpEntry(
+                        ip_address=ip_addr,
+                        mac=MacAddress(address=normalized_target),
+                        state=ArpState.RESOLVED,
+                        interface=entry.get("interface"),
+                    )
+
+            return None  # MAC not found in ARP table
+
+        except (KeyError, TypeError, IndexError) as e:
+            logger.debug(f"EOS ARP-by-MAC search error: {e}")
             return None
 
 
@@ -1181,6 +1298,131 @@ class JunosParser:
             logger.debug(f"Junos interface parse error: {e}")
             return None
 
+    @staticmethod
+    def parse_nd(raw: str, target_ip: str = "") -> Optional[ArpEntry]:
+        """
+        Parse: show ipv6 neighbors {next_hop} | display xml
+
+        Real output from Junos 14.1:
+        <rpc-reply>
+          <ipv6-nd-information>
+            <ipv6-nd-entry>
+              <ipv6-nd-neighbor-address>fe80::ea6:5aff:fe8b:9033</ipv6-nd-neighbor-address>
+              <ipv6-nd-neighbor-l2-address>0c:a6:5a:8b:90:33</ipv6-nd-neighbor-l2-address>
+              <ipv6-nd-state>stale</ipv6-nd-state>
+              <ipv6-nd-expire>685</ipv6-nd-expire>
+              <ipv6-nd-isrouter>yes</ipv6-nd-isrouter>
+              <ipv6-nd-issecure>no</ipv6-nd-issecure>
+              <ipv6-nd-interface-name>ge-0/0/0.0</ipv6-nd-interface-name>
+            </ipv6-nd-entry>
+          </ipv6-nd-information>
+        </rpc-reply>
+
+        Returns ArpEntry (same model — MAC, state, interface all map directly).
+        """
+        root = _safe_xml(raw)
+        if root is None:
+            return None
+
+        try:
+            nd_info = root.find('.//ipv6-nd-information')
+            if nd_info is None:
+                return None
+
+            entries = _xml_find_all(nd_info, 'ipv6-nd-entry')
+            if not entries:
+                return None
+
+            # Find entry matching target_ip, or take first if no filter
+            matched = None
+            for entry in entries:
+                addr_str = _xml_text(entry, 'ipv6-nd-neighbor-address')
+                if target_ip and addr_str == target_ip:
+                    matched = entry
+                    break
+
+            if matched is None:
+                if target_ip:
+                    return ArpEntry(
+                        ip_address=_safe_ip(target_ip),
+                        state=ArpState.INCOMPLETE,
+                    )
+                matched = entries[0]
+
+            addr_str = _xml_text(matched, 'ipv6-nd-neighbor-address')
+            mac_str = _xml_text(matched, 'ipv6-nd-neighbor-l2-address')
+            intf = _xml_text(matched, 'ipv6-nd-interface-name')
+            nd_state = _xml_text(matched, 'ipv6-nd-state').lower()
+
+            normalized = _normalize_mac(mac_str)
+
+            if not mac_str or mac_str.lower() in ('incomplete', 'none'):
+                state = ArpState.INCOMPLETE
+                mac = None
+            elif nd_state == 'stale':
+                # Stale is resolved — MAC is valid, just not recently confirmed
+                state = ArpState.RESOLVED
+                mac = MacAddress(address=normalized) if normalized else None
+            elif nd_state in ('reachable', 'delay', 'probe'):
+                state = ArpState.RESOLVED
+                mac = MacAddress(address=normalized) if normalized else None
+            else:
+                state = ArpState.UNKNOWN
+                mac = MacAddress(address=normalized) if normalized else None
+
+            return ArpEntry(
+                ip_address=_safe_ip(addr_str),
+                mac=mac,
+                state=state,
+                interface=intf or None,
+            )
+
+        except Exception as e:
+            logger.debug(f"Junos ND parse error: {e}")
+            return None
+
+    @staticmethod
+    def search_arp_by_mac(raw: str, target_mac: str) -> Optional[ArpEntry]:
+        """
+        Search full ARP table for an entry matching this MAC address.
+
+        Uses the same 'show arp no-resolve | display xml' output that
+        parse_arp already handles — but searches by MAC instead of by IP.
+
+        This is the cross-AF link-local resolver: ND gives us a MAC,
+        we find the IPv4 address that owns that MAC in the ARP table.
+        """
+        root = _safe_xml(raw)
+        if root is None:
+            return None
+
+        try:
+            arp_info = root.find('.//arp-table-information')
+            if arp_info is None:
+                return None
+
+            normalized_target = _normalize_mac(target_mac)
+            if not normalized_target:
+                return None
+
+            for entry in _xml_find_all(arp_info, 'arp-table-entry'):
+                mac_str = _xml_text(entry, 'mac-address')
+                if _normalize_mac(mac_str) == normalized_target:
+                    ip_str = _xml_text(entry, 'ip-address')
+                    intf = _xml_text(entry, 'interface-name')
+                    return ArpEntry(
+                        ip_address=_safe_ip(ip_str),
+                        mac=MacAddress(address=normalized_target),
+                        state=ArpState.RESOLVED,
+                        interface=intf or None,
+                    )
+
+            return None  # MAC not found in ARP table
+
+        except Exception as e:
+            logger.debug(f"Junos ARP-by-MAC search error: {e}")
+            return None
+
 
 # ============================================================
 # Cisco IOS/IOS-XE — Regex Parsers
@@ -1512,6 +1754,8 @@ class CiscoIOSParser:
 PARSE_ROUTE = "route"
 PARSE_FIB = "fib"
 PARSE_ARP = "arp"
+PARSE_ND = "nd"                         # Neighbor Discovery (IPv6 ARP equivalent)
+PARSE_ARP_BY_MAC = "arp_by_mac"         # Reverse ARP search by MAC (link-local resolver)
 PARSE_INTERFACE = "interface"
 PARSE_MAC_TABLE = "mac_table"
 
@@ -1521,11 +1765,13 @@ PARSE_MAC_TABLE = "mac_table"
 
 _PARSER_REGISTRY: dict[tuple[Platform, str], callable] = {
     # Arista EOS
-    (Platform.ARISTA_EOS, PARSE_ROUTE):     AristaEOSParser.parse_route,
-    (Platform.ARISTA_EOS, PARSE_FIB):       AristaEOSParser.parse_fib,
-    (Platform.ARISTA_EOS, PARSE_ARP):       AristaEOSParser.parse_arp,
-    (Platform.ARISTA_EOS, PARSE_INTERFACE): AristaEOSParser.parse_interface,
-    (Platform.ARISTA_EOS, PARSE_MAC_TABLE): AristaEOSParser.parse_mac_table,
+    (Platform.ARISTA_EOS, PARSE_ROUTE):       AristaEOSParser.parse_route,
+    (Platform.ARISTA_EOS, PARSE_FIB):         AristaEOSParser.parse_fib,
+    (Platform.ARISTA_EOS, PARSE_ARP):         AristaEOSParser.parse_arp,
+    (Platform.ARISTA_EOS, PARSE_ND):          AristaEOSParser.parse_nd,
+    (Platform.ARISTA_EOS, PARSE_ARP_BY_MAC):  AristaEOSParser.search_arp_by_mac,
+    (Platform.ARISTA_EOS, PARSE_INTERFACE):   AristaEOSParser.parse_interface,
+    (Platform.ARISTA_EOS, PARSE_MAC_TABLE):   AristaEOSParser.parse_mac_table,
 
     # Cisco NX-OS
     (Platform.CISCO_NXOS, PARSE_ROUTE):     NXOSParser.parse_route,
@@ -1534,10 +1780,12 @@ _PARSER_REGISTRY: dict[tuple[Platform, str], callable] = {
     (Platform.CISCO_NXOS, PARSE_INTERFACE): NXOSParser.parse_interface,
 
     # Juniper Junos
-    (Platform.JUNIPER_JUNOS, PARSE_ROUTE):     JunosParser.parse_route,
-    (Platform.JUNIPER_JUNOS, PARSE_FIB):       JunosParser.parse_fib,
-    (Platform.JUNIPER_JUNOS, PARSE_ARP):       JunosParser.parse_arp,
-    (Platform.JUNIPER_JUNOS, PARSE_INTERFACE): JunosParser.parse_interface,
+    (Platform.JUNIPER_JUNOS, PARSE_ROUTE):       JunosParser.parse_route,
+    (Platform.JUNIPER_JUNOS, PARSE_FIB):         JunosParser.parse_fib,
+    (Platform.JUNIPER_JUNOS, PARSE_ARP):         JunosParser.parse_arp,
+    (Platform.JUNIPER_JUNOS, PARSE_ND):          JunosParser.parse_nd,
+    (Platform.JUNIPER_JUNOS, PARSE_ARP_BY_MAC):  JunosParser.search_arp_by_mac,
+    (Platform.JUNIPER_JUNOS, PARSE_INTERFACE):   JunosParser.parse_interface,
 
     # Cisco IOS
     (Platform.CISCO_IOS, PARSE_ROUTE):     CiscoIOSParser.parse_route,

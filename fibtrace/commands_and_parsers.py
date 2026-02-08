@@ -274,7 +274,7 @@ COMMAND_SETS: dict[Platform, CommandSet] = {
         show_fib_v6="show route forwarding-table destination {prefix}",
 
         show_arp="show arp no-resolve",
-        show_nd="show ipv6 neighbors {next_hop}",
+        show_nd="show ipv6 neighbors",  # full dump (14.1 doesn't support IP filter), parser filters
         show_mac_table="",  # Junos routers (MX/vMX/SRX) don't have ethernet-switching table
                              # EX/QFX switches do, but that's a future platform variant
         show_interface="show interfaces {interface}",

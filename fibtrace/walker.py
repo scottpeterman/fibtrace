@@ -30,13 +30,17 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
-from ipaddress import IPv4Address, IPv4Network, AddressValueError
+from ipaddress import (
+    IPv4Address, IPv4Network, IPv6Address, IPv6Network,
+    ip_address as _stdlib_ip_address, ip_network as _stdlib_ip_network,
+    AddressValueError,
+)
 from typing import Optional
 import logging
 import time
 
 from .models import (
-    Prefix, DeviceInfo, Hop, HopVerdict, ForwardingChain, ChainStatus,
+    Prefix, AddressFamily, DeviceInfo, Hop, HopVerdict, ForwardingChain, ChainStatus,
     RouteEntry, RouteProtocol, FibEntry, FibState, FibNextHop,
     NextHopResolution, ArpState, InterfaceState,
     Encapsulation, EncapType,
@@ -47,7 +51,8 @@ from .commands_and_parsers import (
 )
 from .parsers import (
     get_parser, get_parser_name,
-    PARSE_ROUTE, PARSE_FIB, PARSE_ARP, PARSE_INTERFACE, PARSE_MAC_TABLE,
+    PARSE_ROUTE, PARSE_FIB, PARSE_ARP, PARSE_ND, PARSE_ARP_BY_MAC,
+    PARSE_INTERFACE, PARSE_MAC_TABLE,
 )
 from .diagnostics import (
     CommandRecord, CommandStatus, ParseResult, FingerprintRecord,
@@ -58,6 +63,20 @@ from .diagnostics import (
 from .client import SSHClient, SSHClientConfig
 
 logger = logging.getLogger("fibtrace")
+
+
+# ============================================================
+# Dual-stack address helpers
+# ============================================================
+
+def _parse_ip(addr_str: str) -> IPv4Address | IPv6Address:
+    """Parse an IPv4 or IPv6 address string. Raises ValueError on failure."""
+    return _stdlib_ip_address(addr_str.strip())
+
+
+def _parse_network(prefix_str: str) -> IPv4Network | IPv6Network:
+    """Parse an IPv4 or IPv6 network string. Raises ValueError on failure."""
+    return _stdlib_ip_network(prefix_str.strip(), strict=False)
 
 
 # ============================================================
@@ -197,14 +216,14 @@ class ChainWalker:
 
         # Build target prefix
         try:
-            target_net = IPv4Network(self.config.target_prefix, strict=False)
+            target_net = _parse_network(self.config.target_prefix)
         except ValueError as e:
             logger.error(f"Invalid prefix: {self.config.target_prefix}: {e}")
             raise
 
         source_device = DeviceInfo(
             hostname="(pending)",
-            ip_address=IPv4Address(self.config.source_host),
+            ip_address=_parse_ip(self.config.source_host),
         )
 
         # Initialize chain and diagnostics
@@ -255,7 +274,7 @@ class ChainWalker:
                 # Record unreachable hop
                 unreachable_device = DeviceInfo(
                     hostname=f"unreachable-{item.ssh_target}",
-                    ip_address=IPv4Address(item.ssh_target),
+                    ip_address=_parse_ip(item.ssh_target),
                 )
                 unreachable_hop = Hop(
                     device=unreachable_device,
@@ -318,7 +337,7 @@ class ChainWalker:
             if hop_index == 0:
                 self._chain.source_device = DeviceInfo(
                     hostname=identity.hostname,
-                    ip_address=IPv4Address(item.ssh_target),
+                    ip_address=_parse_ip(item.ssh_target),
                 )
 
             # ── 4. Fingerprint ──
@@ -489,7 +508,7 @@ class ChainWalker:
 
         device_info = DeviceInfo(
             hostname=hostname,
-            ip_address=IPv4Address(identity.ssh_target),
+            ip_address=_parse_ip(identity.ssh_target),
             platform=platform.value,
         )
 
@@ -500,8 +519,14 @@ class ChainWalker:
         # Format prefix for this platform's CLI syntax
         cli_prefix = self._format_prefix_for_platform(prefix, platform)
 
+        # Detect address family from target prefix
+        is_v6 = isinstance(_parse_network(prefix), IPv6Network)
+
         # ── 1. RIB Lookup ──
-        route_cmd = commands.show_route.format(prefix=cli_prefix)
+        if is_v6 and commands.show_route_v6:
+            route_cmd = commands.show_route_v6.format(prefix=cli_prefix)
+        else:
+            route_cmd = commands.show_route.format(prefix=cli_prefix)
         if json_suffix:
             route_cmd += json_suffix
 
@@ -561,7 +586,10 @@ class ChainWalker:
             return hop, hop_diag
 
         # ── 2. FIB Lookup ──
-        fib_cmd = commands.show_fib.format(prefix=cli_prefix)
+        if is_v6 and commands.show_fib_v6:
+            fib_cmd = commands.show_fib_v6.format(prefix=cli_prefix)
+        else:
+            fib_cmd = commands.show_fib.format(prefix=cli_prefix)
         if json_suffix:
             fib_cmd += json_suffix
 
@@ -637,25 +665,52 @@ class ChainWalker:
         for nh_addr, nh_intf in nh_list:
             resolution = NextHopResolution(next_hop_ip=nh_addr)
 
-            # 3a. ARP/ND lookup (skip for connected/local)
+            # 3a. ARP or ND lookup depending on next-hop address family
             if nh_addr:
-                arp_cmd = commands.show_arp.format(next_hop=str(nh_addr))
-                if json_suffix:
-                    arp_cmd += json_suffix
+                nh_is_v6 = isinstance(nh_addr, IPv6Address)
 
-                arp_output = self._execute_command(client, arp_cmd)
-                arp_parser = get_parser(platform, PARSE_ARP)
+                if nh_is_v6:
+                    # IPv6 next-hop → use ND
+                    nd_cmd = commands.show_nd.format(next_hop=str(nh_addr))
+                    if json_suffix:
+                        nd_cmd += json_suffix
 
-                if arp_parser:
-                    arp_entry, arp_record = parse_with_diagnostics(
-                        device=hostname, platform=platform.value,
-                        command=arp_cmd, raw_output=arp_output,
-                        parser_func=lambda raw, _ip=str(nh_addr): arp_parser(raw, _ip),
-                        parser_name=get_parser_name(platform, PARSE_ARP),
-                        logger=logger,
-                    )
-                    hop_diag.commands.append(arp_record)
-                    resolution.arp_entry = arp_entry
+                    nd_output = self._execute_command(client, nd_cmd)
+                    nd_parser = get_parser(platform, PARSE_ND)
+
+                    if nd_parser:
+                        arp_entry, arp_record = parse_with_diagnostics(
+                            device=hostname, platform=platform.value,
+                            command=nd_cmd, raw_output=nd_output,
+                            parser_func=lambda raw, _ip=str(nh_addr): nd_parser(raw, _ip),
+                            parser_name=get_parser_name(platform, PARSE_ND),
+                            logger=logger,
+                        )
+                        hop_diag.commands.append(arp_record)
+                        resolution.arp_entry = arp_entry
+                    else:
+                        arp_entry = None
+                else:
+                    # IPv4 next-hop → use ARP (existing logic)
+                    arp_cmd = commands.show_arp.format(next_hop=str(nh_addr))
+                    if json_suffix:
+                        arp_cmd += json_suffix
+
+                    arp_output = self._execute_command(client, arp_cmd)
+                    arp_parser = get_parser(platform, PARSE_ARP)
+
+                    if arp_parser:
+                        arp_entry, arp_record = parse_with_diagnostics(
+                            device=hostname, platform=platform.value,
+                            command=arp_cmd, raw_output=arp_output,
+                            parser_func=lambda raw, _ip=str(nh_addr): arp_parser(raw, _ip),
+                            parser_name=get_parser_name(platform, PARSE_ARP),
+                            logger=logger,
+                        )
+                        hop_diag.commands.append(arp_record)
+                        resolution.arp_entry = arp_entry
+                    else:
+                        arp_entry = None
 
                 # 3b. MAC table (conditional, optional)
                 if (not self.config.skip_mac_lookup
@@ -710,8 +765,25 @@ class ChainWalker:
             resolutions.append(resolution)
 
             # Collect next-hop IPs for BFS queue — always, regardless of errors
+            # Link-local v6 next-hops must be resolved to routable SSH targets
             if nh_addr:
-                next_device_ips.append(nh_addr)
+                if isinstance(nh_addr, IPv6Address) and nh_addr.is_link_local:
+                    # ── Link-local resolution: ND → MAC → ARP → IPv4 SSH target ──
+                    resolved_ip = self._resolve_link_local(
+                        client, platform, hostname, commands,
+                        json_suffix, nh_addr, nh_intf, resolution,
+                        hop_diag,
+                    )
+                    if resolved_ip:
+                        next_device_ips.append(resolved_ip)
+                    else:
+                        notes_ll = (
+                            f"Cannot resolve link-local {nh_addr} on "
+                            f"{nh_intf or '?'} — MAC not found in ARP table"
+                        )
+                        logger.warning(f"[{hostname}] {notes_ll}")
+                else:
+                    next_device_ips.append(nh_addr)
 
         # ── 4. Assess verdict ──
         verdict, detail, notes = self._assess_verdict(
@@ -744,6 +816,85 @@ class ChainWalker:
         )
 
         return hop, hop_diag
+
+    # ────────────────────────────────────────────
+    # Link-Local Resolution (IPv6 → IPv4 SSH target)
+    # ────────────────────────────────────────────
+
+    def _resolve_link_local(
+        self, client, platform: Platform, hostname: str,
+        commands, json_suffix: str,
+        nh_addr: IPv6Address, nh_intf: str,
+        resolution: NextHopResolution,
+        hop_diag,
+    ) -> Optional[IPv4Address]:
+        """
+        Resolve a link-local v6 next-hop to a routable IPv4 SSH target.
+
+        Strategy: ND → MAC → ARP (cross-AF correlation).
+
+        The ND lookup was already done in the resolution loop — the MAC
+        is on resolution.arp_entry. We just need to search the ARP table
+        for a matching MAC to get the corresponding IPv4 address.
+
+        Uses data the walker is already collecting — no LLDP, no CDP,
+        no topology hints. Two commands total: ND (already done) + ARP
+        full table (one extra command per link-local next-hop).
+        """
+        # Step 1: Get MAC from ND entry (already resolved)
+        nd_entry = resolution.arp_entry
+        if not nd_entry or not nd_entry.mac or not nd_entry.mac.address:
+            logger.warning(
+                f"[{hostname}] ND lookup failed for {nh_addr} — no MAC available"
+            )
+            return None
+
+        target_mac = nd_entry.mac.address
+        logger.debug(
+            f"[{hostname}] Link-local {nh_addr} → MAC {target_mac}, "
+            f"searching ARP table..."
+        )
+
+        # Step 2: Fetch full ARP table and search by MAC
+        # Junos: show_arp is already unfiltered ("show arp no-resolve")
+        # EOS/IOS/NX-OS: strip the {next_hop} placeholder to get full table
+        arp_base_cmd = commands.show_arp
+        if '{next_hop}' in arp_base_cmd:
+            arp_base_cmd = arp_base_cmd.split('{')[0].strip()
+        if json_suffix:
+            arp_base_cmd += json_suffix
+
+        arp_full_output = self._execute_command(client, arp_base_cmd)
+        arp_mac_parser = get_parser(platform, PARSE_ARP_BY_MAC)
+
+        if not arp_mac_parser:
+            logger.warning(
+                f"[{hostname}] No ARP-by-MAC parser for {platform.value}"
+            )
+            return None
+
+        arp_match, arp_mac_record = parse_with_diagnostics(
+            device=hostname, platform=platform.value,
+            command=arp_base_cmd, raw_output=arp_full_output,
+            parser_func=lambda raw, _mac=target_mac: arp_mac_parser(raw, _mac),
+            parser_name=f"{get_parser_name(platform, PARSE_ARP_BY_MAC)}/mac-search",
+            logger=logger,
+        )
+        hop_diag.commands.append(arp_mac_record)
+
+        if arp_match and arp_match.ip_address:
+            resolved_v4 = arp_match.ip_address
+            logger.info(
+                f"[{hostname}] Link-local resolved: "
+                f"{nh_addr} → MAC {target_mac} → {resolved_v4}"
+            )
+            return resolved_v4
+
+        logger.warning(
+            f"[{hostname}] MAC {target_mac} (from ND for {nh_addr}) "
+            f"not found in ARP table"
+        )
+        return None
 
     # ────────────────────────────────────────────
     # Verdict Assessment
@@ -974,18 +1125,34 @@ class ChainWalker:
         """
         Format a prefix string for a platform's CLI syntax.
 
-        IOS/IOS-XE: no CIDR notation. 'show ip route 10.0.0.1' for hosts,
-                    'show ip route 10.0.0.0 255.255.255.0' for subnets.
-        Junos:      bare IP for hosts, CIDR for subnets.
-                    'show route 10.0.0.1' works, '10.0.0.1/32' does not.
-        NX-OS:      CIDR works, but bare IP also works.
-        EOS:        CIDR works fine.
+        IPv4:
+          IOS/IOS-XE: no CIDR notation. 'show ip route 10.0.0.1' for hosts,
+                      'show ip route 10.0.0.0 255.255.255.0' for subnets.
+          Junos:      bare IP for hosts, CIDR for subnets.
+                      'show route 10.0.0.1' works, '10.0.0.1/32' does not.
+          NX-OS:      CIDR works, but bare IP also works.
+          EOS:        CIDR works fine.
+
+        IPv6:
+          IOS/IOS-XE: CIDR notation works for v6 (unlike v4 dotted-mask).
+          Junos:      bare address for /128 host routes, CIDR otherwise.
+          NX-OS/EOS:  CIDR works fine.
         """
         try:
-            net = IPv4Network(prefix, strict=False)
+            net = _parse_network(prefix)
         except ValueError:
             return prefix  # pass through, let the device error
 
+        if isinstance(net, IPv6Network):
+            # IPv6 formatting
+            if platform == Platform.JUNIPER_JUNOS:
+                if net.prefixlen == 128:
+                    return str(net.network_address)
+                return str(net)
+            # IOS, EOS, NX-OS: CIDR works for v6
+            return str(net)
+
+        # IPv4 formatting (existing logic)
         if platform == Platform.CISCO_IOS:
             if net.prefixlen == 32:
                 return str(net.network_address)
@@ -1090,19 +1257,20 @@ def main():
     args = parser.parse_args()
 
     # ── Validate inputs before we touch SSH ──
-    # Prefix: must be a valid IPv4 network or host address
+    # Prefix: must be a valid IPv4 or IPv6 network or host address
     prefix_str = args.prefix
     try:
-        # If no mask, treat as host route
+        # If no mask, detect address family for default mask
         if '/' not in prefix_str:
-            prefix_str = prefix_str + '/32'
-        IPv4Network(prefix_str, strict=False)
+            addr = _parse_ip(prefix_str)
+            prefix_str += '/128' if isinstance(addr, IPv6Address) else '/32'
+        _parse_network(prefix_str)
     except (ValueError, AddressValueError) as e:
         parser.error(f"Invalid prefix '{args.prefix}': {e}")
 
-    # Source: must be a valid IPv4 address
+    # Source: must be a valid IPv4 or IPv6 address
     try:
-        IPv4Address(args.source)
+        _parse_ip(args.source)
     except (ValueError, AddressValueError) as e:
         parser.error(f"Invalid source address '{args.source}': {e}")
 
@@ -1188,9 +1356,22 @@ def main():
             egress = ""
             if hop.resolutions:
                 intfs = []
-                for res in hop.resolutions:
+                for i, res in enumerate(hop.resolutions):
                     if res.egress_interface:
-                        nh_str = str(res.next_hop_ip) if res.next_hop_ip else ""
+                        nh_str = ""
+                        if res.next_hop_ip:
+                            if (isinstance(res.next_hop_ip, IPv6Address)
+                                    and res.next_hop_ip.is_link_local):
+                                # Show link-local truncated + resolved IPv4 target
+                                ll_short = str(res.next_hop_ip)
+                                # Find resolved target in next_device_ips
+                                if i < len(hop.next_device_ips):
+                                    resolved = hop.next_device_ips[i]
+                                    nh_str = f"{ll_short} (→ {resolved})"
+                                else:
+                                    nh_str = f"{ll_short} (unresolved)"
+                            else:
+                                nh_str = str(res.next_hop_ip)
                         intfs.append(f"{res.egress_interface.name}"
                                      + (f" → {nh_str}" if nh_str else ""))
                 if intfs:
