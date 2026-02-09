@@ -9,21 +9,32 @@ The hostname in the prompt IS the device identity.
 Sequence per hop:
     1. SSH to IP from queue
     2. find_prompt() → extract_hostname_from_prompt()
-    3. Check visited set (by hostname) — loop?
+    3. Check visited set (by hostname) — revisit?
     4. If new: fingerprint, gather, assess, enqueue next-hops
-    5. If seen: already visited this box via different IP, skip
+    5. If seen: classify as loop or convergence (see below)
 
-The one cost: loop detection is post-connection, not pre-connection.
-We burn one SSH handshake to discover we've been here before.
-Acceptable for chains of 3-15 devices.
+Loop vs Convergence (ECMP diamond detection):
+    Each queue item carries its ancestor set — the hostnames on the path
+    from the source to this item. When we revisit a hostname:
+      - If it's in the ancestor set → REAL LOOP (A→B→C→A)
+      - If it's NOT in ancestors   → ECMP CONVERGENCE (normal)
+
+    ECMP convergence (sibling paths reconverging) is expected in any
+    multi-path network and is NOT flagged as an anomaly.
 
           source
           /    \\          ← ECMP: two different next-hop IPs
-       spine1  spine2       but spine1# and spine2# are unique
-        /        |  \\
-     leaf1    leaf2  leaf3
+       spine1  spine2       unique hostnames, both visited
+        /    \\   / \\
+     leaf1  leaf2  leaf3
        \\       /
-        spine1              ← same hostname! loop detected, skip
+        spine1              ← ancestor! this IS a loop
+
+          source
+          /    \\
+       agg-01  agg-02      ← ECMP fan-out
+          \\    /
+          edge-01           ← convergence, NOT a loop
 """
 
 from __future__ import annotations
@@ -131,6 +142,7 @@ class QueueItem:
     parent_hostname: Optional[str] = None   # who sent us here (by hostname)
     parent_interface: Optional[str] = None
     expected_hostname: Optional[str] = None  # hint from reverse DNS or prior knowledge
+    ancestors: frozenset[str] = field(default_factory=frozenset)  # hostnames in path from root
 
 
 # ============================================================
@@ -306,18 +318,34 @@ class ChainWalker:
                 hop_index += 1
                 continue
 
-            # ── 3. Loop detection BY HOSTNAME ──
+            # ── 3. Revisit check BY HOSTNAME ──
+            # Distinguish real loops from ECMP convergence:
+            #   Loop:        A → B → C → A  (ancestor revisited — forwarding loop)
+            #   Convergence: A → B → D, A → C → D  (sibling paths meet — normal ECMP)
             if identity.hostname in self._visited:
-                logger.warning(
-                    f"Loop detected: {item.ssh_target} is {identity.hostname} "
-                    f"(already visited)"
-                )
                 self._release_connection(client, item.ssh_target)
-                loop_detected = True
-                self._chain.anomalies.append(
-                    f"Loop: reached {identity.hostname} again via "
-                    f"{item.ssh_target} (parent: {item.parent_hostname})"
-                )
+                # Cache this IP so the pre-connection guard (step 0) catches
+                # any remaining queue items pointing at the same address.
+                self._ip_to_hostname[item.ssh_target] = identity.hostname
+                if identity.hostname in item.ancestors:
+                    # Real loop — this device is in our own forwarding path
+                    logger.warning(
+                        f"Loop detected: {item.ssh_target} is {identity.hostname} "
+                        f"(ancestor in forwarding path)"
+                    )
+                    loop_detected = True
+                    self._chain.anomalies.append(
+                        f"Loop: {identity.hostname} appears in its own "
+                        f"forwarding path via {item.ssh_target} "
+                        f"(parent: {item.parent_hostname})"
+                    )
+                else:
+                    # ECMP convergence — already visited via a sibling path
+                    logger.info(
+                        f"ECMP convergence: {item.ssh_target} is "
+                        f"{identity.hostname} (visited via different branch, "
+                        f"parent: {item.parent_hostname})"
+                    )
                 continue
 
             # ── Mark visited ──
@@ -371,11 +399,13 @@ class ChainWalker:
                 continue
 
             # ── 8. Enqueue next-hop devices (ECMP fan-out) ──
+            next_ancestors = item.ancestors | {identity.hostname}
             for next_ip in hop.next_device_ips:
                 queue.append(QueueItem(
                     ssh_target=str(next_ip),
                     depth=item.depth + 1,
                     parent_hostname=identity.hostname,
+                    ancestors=next_ancestors,
                 ))
 
             # Track ECMP
