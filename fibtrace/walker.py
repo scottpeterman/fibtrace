@@ -42,7 +42,7 @@ import time
 from .models import (
     Prefix, AddressFamily, DeviceInfo, Hop, HopVerdict, ForwardingChain, ChainStatus,
     RouteEntry, RouteProtocol, FibEntry, FibState, FibNextHop,
-    NextHopResolution, ArpState, InterfaceState,
+    NextHopResolution, ArpEntry, ArpState, MacAddress, InterfaceState,
     Encapsulation, EncapType,
 )
 from .commands_and_parsers import (
@@ -671,7 +671,14 @@ class ChainWalker:
 
                 if nh_is_v6:
                     # IPv6 next-hop → use ND
-                    nd_cmd = commands.show_nd.format(next_hop=str(nh_addr))
+                    # IOS doesn't accept link-local as a positional arg —
+                    # use '| include' to filter from the full ND table
+                    if (platform == Platform.CISCO_IOS
+                            and nh_addr.is_link_local):
+                        nd_base = commands.show_nd.split('{')[0].strip()
+                        nd_cmd = f"{nd_base} | include {nh_addr}"
+                    else:
+                        nd_cmd = commands.show_nd.format(next_hop=str(nh_addr))
                     if json_suffix:
                         nd_cmd += json_suffix
 
@@ -821,6 +828,47 @@ class ChainWalker:
     # Link-Local Resolution (IPv6 → IPv4 SSH target)
     # ────────────────────────────────────────────
 
+    @staticmethod
+    def _mac_from_eui64(addr: IPv6Address) -> Optional[str]:
+        """
+        Derive MAC address from an EUI-64 link-local IPv6 address.
+
+        EUI-64 embeds the MAC in the interface identifier with ff:fe
+        inserted in the middle and bit 7 (Universal/Local) flipped.
+
+        fe80::e3f:42ff:fef4:b565
+          → interface ID bytes: 0e:3f:42:ff:fe:f4:b5:65
+          → ff:fe in middle confirms EUI-64
+          → remove ff:fe:             0e:3f:42:f4:b5:65
+          → flip bit 7 of byte 0:    0c:3f:42:f4:b5:65
+          → MAC: 0c:3f:42:f4:b5:65
+
+        Returns normalized MAC (aa:bb:cc:dd:ee:ff) or None if not EUI-64.
+        """
+        if not addr.is_link_local:
+            return None
+
+        # Get the full 16-byte packed representation
+        packed = addr.packed  # 16 bytes
+        # Interface ID is bytes 8-15
+        iid = packed[8:16]
+
+        # EUI-64 marker: bytes 3-4 of IID must be ff:fe
+        if iid[3] != 0xFF or iid[4] != 0xFE:
+            return None
+
+        # Extract MAC: IID bytes [0:3] + [5:8], flip bit 7 of byte 0
+        mac_bytes = bytearray([
+            iid[0] ^ 0x02,  # flip Universal/Local bit
+            iid[1],
+            iid[2],
+            iid[5],
+            iid[6],
+            iid[7],
+        ])
+
+        return ':'.join(f'{b:02x}' for b in mac_bytes)
+
     def _resolve_link_local(
         self, client, platform: Platform, hostname: str,
         commands, json_suffix: str,
@@ -832,6 +880,8 @@ class ChainWalker:
         Resolve a link-local v6 next-hop to a routable IPv4 SSH target.
 
         Strategy: ND → MAC → ARP (cross-AF correlation).
+        Fallback: if ND table is empty, derive MAC from EUI-64 encoding
+                  in the link-local address itself (works for most hardware).
 
         The ND lookup was already done in the resolution loop — the MAC
         is on resolution.arp_entry. We just need to search the ARP table
@@ -843,17 +893,33 @@ class ChainWalker:
         """
         # Step 1: Get MAC from ND entry (already resolved)
         nd_entry = resolution.arp_entry
-        if not nd_entry or not nd_entry.mac or not nd_entry.mac.address:
-            logger.warning(
-                f"[{hostname}] ND lookup failed for {nh_addr} — no MAC available"
+        if nd_entry and nd_entry.mac and nd_entry.mac.address:
+            target_mac = nd_entry.mac.address
+            logger.debug(
+                f"[{hostname}] Link-local {nh_addr} → MAC {target_mac} (from ND)"
             )
-            return None
-
-        target_mac = nd_entry.mac.address
-        logger.debug(
-            f"[{hostname}] Link-local {nh_addr} → MAC {target_mac}, "
-            f"searching ARP table..."
-        )
+        else:
+            # Fallback: derive MAC from EUI-64 link-local encoding
+            eui64_mac = self._mac_from_eui64(nh_addr)
+            if eui64_mac:
+                logger.info(
+                    f"[{hostname}] ND empty for {nh_addr} — derived MAC "
+                    f"{eui64_mac} from EUI-64 encoding"
+                )
+                target_mac = eui64_mac
+                # Populate the resolution entry so downstream reporting works
+                resolution.arp_entry = ArpEntry(
+                    ip_address=nh_addr,
+                    mac=MacAddress(address=eui64_mac),
+                    interface=nh_intf,
+                    state=ArpState.RESOLVED,
+                )
+            else:
+                logger.warning(
+                    f"[{hostname}] ND lookup failed for {nh_addr} and address "
+                    f"is not EUI-64 — no MAC available"
+                )
+                return None
 
         # Step 2: Fetch full ARP table and search by MAC
         # Junos: show_arp is already unfiltered ("show arp no-resolve")
@@ -1149,7 +1215,12 @@ class ChainWalker:
                 if net.prefixlen == 128:
                     return str(net.network_address)
                 return str(net)
-            # IOS, EOS, NX-OS: CIDR works for v6
+            if platform == Platform.CISCO_IOS:
+                # IOS 'show ipv6 cef' does NOT accept CIDR notation —
+                # bare address triggers longest-match lookup, which is
+                # what we want for both /128 hosts and subnet probes.
+                return str(net.network_address)
+            # EOS, NX-OS: CIDR works for v6
             return str(net)
 
         # IPv4 formatting (existing logic)

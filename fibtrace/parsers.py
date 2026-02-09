@@ -1512,18 +1512,25 @@ class CiscoIOSParser:
     @staticmethod
     def parse_fib(raw: str, target_prefix: str) -> Optional[FibEntry]:
         """
-        Parse: show ip cef {prefix} detail
+        Parse: show ip cef {prefix} detail   /  show ipv6 cef {prefix} detail
 
-        Sample output:
+        IPv4 sample output:
         10.0.0.0/24
           nexthop 172.16.1.1 GigabitEthernet0/1
 
+        IPv6 sample output:
+        ::/0, epoch 0, flags [default route]
+          nexthop FE80::E3F:42FF:FEF4:B565 GigabitEthernet0/0
+
+        2001:db8:1ad1::12/128, epoch 0
+          nexthop FE80::E3F:42FF:FEF4:B565 GigabitEthernet0/0
+
         Or:
-        10.0.0.0/24
+        10.0.0.0/24             (or IPv6 equivalent)
           attached to GigabitEthernet0/1
 
         Or:
-        0.0.0.0/0
+        0.0.0.0/0               (or ::/0)
           no route
 
         Or:
@@ -1534,8 +1541,12 @@ class CiscoIOSParser:
             return None
 
         try:
-            # Prefix on first meaningful line
+            # Prefix on first meaningful line — try IPv4 first, then IPv6
             m = re.search(r'(\d+\.\d+\.\d+\.\d+/\d+)', raw)
+            if not m:
+                # IPv6: match addr/len at start of line (e.g. "::/0," or
+                # "2001:db8::1/128, epoch ...")
+                m = re.search(r'^([0-9a-fA-F:]+/\d+)', raw, re.MULTILINE)
             if not m:
                 return None
             prefix = _make_prefix(m.group(1))
@@ -1564,9 +1575,11 @@ class CiscoIOSParser:
                     resolved=True,
                 )
 
-            # Extract nexthop entries
+            # Extract nexthop entries — IPv4 or IPv6 next-hop addresses
             fib_nhs = []
-            for m in re.finditer(r'nexthop\s+([\d\.]+)\s+(\S+)', raw):
+            for m in re.finditer(
+                r'nexthop\s+([0-9a-fA-F:\.]+)\s+(\S+)', raw
+            ):
                 fib_nhs.append(FibNextHop(
                     address=_safe_ip(m.group(1)),
                     interface=m.group(2),
@@ -1745,6 +1758,119 @@ class CiscoIOSParser:
             logger.debug(f"IOS interface parse error: {e}")
             return None
 
+    @staticmethod
+    def parse_nd(raw: str, target_ip: str = "") -> Optional[ArpEntry]:
+        """
+        Parse: show ipv6 neighbors {next_hop}
+
+        Sample:
+        IPv6 Address                              Age Link-layer Addr State Interface
+        FE80::E3F:42FF:FEF4:B565                   17 0c3f.42f4.b565  STALE Gi0/0
+        2001:db8::1                                  0 001a.2b3c.4d5e  REACH Gi0/1
+
+        States: REACH, STALE, DELAY, PROBE, INCMP, ?
+        """
+        if not raw or not raw.strip():
+            return None
+
+        try:
+            # Normalize target for comparison
+            target_norm = ""
+            if target_ip:
+                tip = _safe_ip(target_ip)
+                if tip:
+                    target_norm = str(tip)
+
+            # Match ND entries — IPv6 addr, age, MAC (or Incomplete), state, interface
+            for m in re.finditer(
+                r'([0-9a-fA-F:]+)\s+(\d+|-)\s+'
+                r'([\da-fA-F\.]+|Incomplete)\s+'
+                r'(\S+)\s+(\S+)',
+                raw
+            ):
+                ipv6_str = m.group(1)
+                mac_str = m.group(3)
+                state_str = m.group(4).upper()
+                intf = m.group(5)
+
+                ip_addr = _safe_ip(ipv6_str)
+                if not ip_addr:
+                    continue
+
+                # If we have a target, only return that match
+                if target_norm and str(ip_addr) != target_norm:
+                    continue
+
+                if mac_str.lower() == "incomplete":
+                    return ArpEntry(
+                        ip_address=ip_addr,
+                        state=ArpState.INCOMPLETE,
+                        interface=intf,
+                    )
+
+                normalized = _normalize_mac(mac_str)
+                mac = MacAddress(address=normalized) if normalized else None
+
+                if state_str in ("REACH", "STALE", "DELAY", "PROBE"):
+                    state = ArpState.RESOLVED
+                elif state_str == "INCMP":
+                    state = ArpState.INCOMPLETE
+                else:
+                    state = ArpState.STALE
+
+                return ArpEntry(
+                    ip_address=ip_addr,
+                    mac=mac,
+                    state=state,
+                    interface=intf,
+                )
+
+            return None
+
+        except Exception as e:
+            logger.debug(f"IOS ND parse error: {e}")
+            return None
+
+    @staticmethod
+    def search_arp_by_mac(raw: str, target_mac: str) -> Optional[ArpEntry]:
+        """
+        Search full ARP table output for an entry matching a MAC address.
+
+        Uses 'show ip arp' text output (no JSON on IOS).
+        Sample:
+        Protocol  Address          Age (min)  Hardware Addr   Type   Interface
+        Internet  172.17.202.1           15   0c3f.42f4.b565  ARPA   GigabitEthernet0/0
+        Internet  172.17.202.2            -   0c0b.d99e.0000  ARPA   GigabitEthernet0/0
+        """
+        if not raw or not raw.strip():
+            return None
+
+        try:
+            normalized_target = _normalize_mac(target_mac)
+            if not normalized_target:
+                return None
+
+            for m in re.finditer(
+                r'Internet\s+([\d\.]+)\s+(\d+|-)\s+'
+                r'([\da-fA-F\.]+)\s+ARPA\s+(\S+)',
+                raw
+            ):
+                mac_str = _normalize_mac(m.group(3))
+                if mac_str == normalized_target:
+                    ip_addr = _safe_ip(m.group(1))
+                    return ArpEntry(
+                        ip_address=ip_addr,
+                        mac=MacAddress(address=normalized_target),
+                        state=ArpState.RESOLVED,
+                        interface=m.group(4),
+                    )
+
+            return None
+
+        except Exception as e:
+            logger.debug(f"IOS ARP-by-MAC search error: {e}")
+            return None
+
 
 # ============================================================
 # Parser Registry — dispatch by platform and data type
@@ -1788,10 +1914,12 @@ _PARSER_REGISTRY: dict[tuple[Platform, str], callable] = {
     (Platform.JUNIPER_JUNOS, PARSE_INTERFACE):   JunosParser.parse_interface,
 
     # Cisco IOS
-    (Platform.CISCO_IOS, PARSE_ROUTE):     CiscoIOSParser.parse_route,
-    (Platform.CISCO_IOS, PARSE_FIB):       CiscoIOSParser.parse_fib,
-    (Platform.CISCO_IOS, PARSE_ARP):       CiscoIOSParser.parse_arp,
-    (Platform.CISCO_IOS, PARSE_INTERFACE): CiscoIOSParser.parse_interface,
+    (Platform.CISCO_IOS, PARSE_ROUTE):       CiscoIOSParser.parse_route,
+    (Platform.CISCO_IOS, PARSE_FIB):         CiscoIOSParser.parse_fib,
+    (Platform.CISCO_IOS, PARSE_ARP):         CiscoIOSParser.parse_arp,
+    (Platform.CISCO_IOS, PARSE_ND):          CiscoIOSParser.parse_nd,
+    (Platform.CISCO_IOS, PARSE_ARP_BY_MAC):  CiscoIOSParser.search_arp_by_mac,
+    (Platform.CISCO_IOS, PARSE_INTERFACE):   CiscoIOSParser.parse_interface,
 }
 
 
