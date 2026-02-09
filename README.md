@@ -97,12 +97,12 @@ Status: COMPLETE | 5 devices | 1 ECMP branches | 77.0s
 Four-hop IPv4 trace across Juniper vMX (14.1) and Arista EOS, mixed vendor path:
 
 ```
-fibtrace: 172.17.1.29/32 from edge01.iad1
+fibtrace: 172.17.1.29/32 from edge01
 ──────────────────────────────────────────────────
-  hop 0: edge01.iad1          | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  ge-0/0/0.0 → 172.17.1.23
-  hop 1: spine1.iad1            | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  Port-Channel1 → 172.17.1.10
-  hop 2: edge1-01.iad1        | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  ge-0/0/2.0 → 172.17.1.26
-  hop 3: edge5-01.iad1        | route ✓ fib — nh — link — → HEALTHY (connected)  ge-0/0/1.0
+  hop 0: edge01          | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  ge-0/0/0.0 → 172.17.1.23
+  hop 1: spine1            | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  Port-Channel1 → 172.17.1.10
+  hop 2: edge1-01        | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  ge-0/0/2.0 → 172.17.1.26
+  hop 3: edge5-01        | route ✓ fib — nh — link — → HEALTHY (connected)  ge-0/0/1.0
 ──────────────────────────────────────────────────
 Status: COMPLETE | 4 devices | 0 ECMP branches | 58.8s
 ```
@@ -110,11 +110,11 @@ Status: COMPLETE | 4 devices | 0 ECMP branches | 58.8s
 Three-hop IPv6 trace across Arista EOS and Juniper Junos with link-local next-hops (OSPFv3):
 
 ```
-fibtrace: 2001:db8:1dc11::14/128 from spine5-01.iad1
+fibtrace: 2001:db8:1dc11::14/128 from spine5-01
 ──────────────────────────────────────────────────
-  hop 0: spine5-01.iad1         | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  Ethernet1 → fe80::205:86ff:fe71:5b01 (→ 172.17.1.28)
-  hop 1: edge5-01.iad1        | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  ge-0/0/0.0 → fe80::205:86ff:fe71:8503 (→ 172.17.1.33)
-  hop 2: edge1-02.iad1        | route ✓ fib — nh — link — → HEALTHY (connected)  lo0.0
+  hop 0: spine5-01         | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  Ethernet1 → fe80::205:86ff:fe71:5b01 (→ 172.17.1.28)
+  hop 1: edge5-01        | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  ge-0/0/0.0 → fe80::205:86ff:fe71:8503 (→ 172.17.1.33)
+  hop 2: edge1-02        | route ✓ fib — nh — link — → HEALTHY (connected)  lo0.0
 ──────────────────────────────────────────────────
 Status: COMPLETE | 3 devices | 0 ECMP branches | 46.5s
 ```
@@ -125,9 +125,9 @@ Four-hop IPv6 trace originating from Cisco IOS, across Arista EOS and Juniper Ju
 fibtrace: 2001:db8:1dc11::12/128 from tor201
 ──────────────────────────────────────────────────
   hop 0: tor201               | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  GigabitEthernet0/0 → fe80::e3f:42ff:fef4:b565 (→ 172.17.202.1)
-  hop 1: spine5-01.iad1         | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  Ethernet1 → fe80::205:86ff:fe71:5b01 (→ 172.17.1.28)
-  hop 2: edge5-01.iad1        | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  ge-0/0/2.0 → fe80::205:86ff:fe71:3902 (→ 172.17.1.27)
-  hop 3: edge1-01.iad1        | route ✓ fib — nh — link — → HEALTHY (connected)  lo0.0
+  hop 1: spine5-01         | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  Ethernet1 → fe80::205:86ff:fe71:5b01 (→ 172.17.1.28)
+  hop 2: edge5-01        | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  ge-0/0/2.0 → fe80::205:86ff:fe71:3902 (→ 172.17.1.27)
+  hop 3: edge1-01        | route ✓ fib — nh — link — → HEALTHY (connected)  lo0.0
 ──────────────────────────────────────────────────
 Status: COMPLETE | 4 devices | 0 ECMP branches | 80.0s
 ```
