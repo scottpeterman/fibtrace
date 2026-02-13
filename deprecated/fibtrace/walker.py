@@ -74,7 +74,6 @@ from .diagnostics import (
     dump_hop_summary, dump_hop_detail, dump_chain_summary,
 )
 from .client import SSHClient, SSHClientConfig
-from .events import HopEvent, TuiVerdict, EventCallback
 
 logger = logging.getLogger("chainwalk")
 
@@ -184,9 +183,6 @@ class WalkerConfig:
     # e.g., "kentik.com" → "edge03.iad1" becomes "edge03.iad1.kentik.com"
     dns_domain: Optional[str] = None
 
-    # TUI event callback — if set, walker emits HopEvent at each stage
-    event_callback: Optional[EventCallback] = None
-
 
 # ============================================================
 # BFS Queue Item
@@ -272,207 +268,6 @@ class ChainWalker:
         the slow parts and the user needs to know what's happening.
         """
         print(msg, file=sys.stderr, end=end, flush=True)
-
-    # ────────────────────────────────────────────
-    # TUI Event Emission
-    # ────────────────────────────────────────────
-
-    def _emit(self, event: HopEvent) -> None:
-        """Send an event to the TUI callback, if registered."""
-        cb = self.config.event_callback
-        if cb is not None:
-            try:
-                cb(event)
-            except Exception as e:
-                logger.debug(f"Event callback error: {e}")
-
-    @staticmethod
-    def _verdict_to_tui(verdict: HopVerdict, is_connected: bool = False) -> TuiVerdict:
-        """Map walker's HopVerdict to TUI's TuiVerdict."""
-        if is_connected and verdict == HopVerdict.HEALTHY:
-            return TuiVerdict.HEALTHY_CONNECTED
-        mapping = {
-            HopVerdict.HEALTHY: TuiVerdict.HEALTHY,
-            HopVerdict.NO_ROUTE: TuiVerdict.NO_ROUTE,
-            HopVerdict.BLACKHOLE: TuiVerdict.BLACKHOLE,
-            HopVerdict.RIB_ONLY: TuiVerdict.RIB_ONLY,
-            HopVerdict.INCOMPLETE_ARP: TuiVerdict.INCOMPLETE_ARP,
-            HopVerdict.INTERFACE_DOWN: TuiVerdict.INTERFACE_DOWN,
-            HopVerdict.INTERFACE_ERRORS: TuiVerdict.INTERFACE_ERRORS,
-            HopVerdict.UNREACHABLE: TuiVerdict.UNREACHABLE,
-        }
-        return mapping.get(verdict, TuiVerdict.HEALTHY)
-
-    def _build_checks_string(self, hop: Hop) -> str:
-        """Build the 'route ✓ fib ✓ nh ✓ link ✓' summary."""
-        v = hop.verdict
-        is_connected = hop.is_terminal and hop.route and hop.route.is_connected
-
-        if v == HopVerdict.UNREACHABLE:
-            return "unreachable"
-        if is_connected:
-            return "route ✓ fib — nh — link —"
-
-        r = "✓" if hop.route else "✗"
-        f = "✓" if (hop.fib and hop.fib.is_forwarding) else "✗"
-        n = "✓" if hop.resolutions and all(
-            res.is_resolved for res in hop.resolutions) else "✗"
-        link_ok = True
-        if hop.resolutions:
-            for res in hop.resolutions:
-                if (res.egress_interface and
-                        res.egress_interface.state != InterfaceState.UP_UP):
-                    link_ok = False
-        l = "✓" if link_ok else "✗"
-        return f"route {r} fib {f} nh {n} link {l}"
-
-    def _build_egress_string(self, hop: Hop) -> str:
-        """Build egress interface summary for tree display."""
-        is_connected = hop.is_terminal and hop.route and hop.route.is_connected
-
-        if hop.resolutions:
-            intfs = []
-            for i, res in enumerate(hop.resolutions):
-                if res.egress_interface:
-                    nh_str = ""
-                    if res.next_hop_ip:
-                        if (isinstance(res.next_hop_ip, IPv6Address)
-                                and res.next_hop_ip.is_link_local):
-                            ll_short = str(res.next_hop_ip)
-                            if i < len(hop.next_device_ips):
-                                resolved = hop.next_device_ips[i]
-                                nh_str = f"{ll_short} (→ {resolved})"
-                            else:
-                                nh_str = f"{ll_short} (unresolved)"
-                        else:
-                            nh_str = str(res.next_hop_ip)
-                    intfs.append(f"{res.egress_interface.name}"
-                                 + (f" → {nh_str}" if nh_str else ""))
-            if intfs:
-                return ", ".join(intfs)
-        elif is_connected and hop.route and hop.route.next_hops:
-            intf = hop.route.next_hops[0].interface
-            if intf:
-                return intf
-        return ""
-
-    def _build_hop_notes(self, hop: Hop, via_default: bool) -> list[str]:
-        """Build TUI-facing note strings."""
-        notes = []
-        is_connected = hop.is_terminal and hop.route and hop.route.is_connected
-        if via_default:
-            notes.append("[via default]")
-        if is_connected:
-            notes.append("(connected)")
-        if hop.next_device_ips and len(hop.next_device_ips) > 1:
-            notes.append(f"ECMP: {len(hop.next_device_ips)} paths")
-        return notes
-
-    def _build_log_lines(self, hop_diag: HopDiagnostic, hop: Hop,
-                         identity: DeviceIdentity,
-                         via_default: bool, hop_index: int) -> tuple[list, list, list]:
-        """
-        Build log lines at three verbosity levels from diagnostic data.
-        Returns (basic, verbose, debug) — lists of Rich markup strings.
-        """
-        hostname = identity.hostname
-        ssh_target = identity.ssh_target
-        platform = identity.platform.value if identity.platform else "unknown"
-        is_connected = hop.is_terminal and hop.route and hop.route.is_connected
-
-        # ── Basic: one-line verdict ──
-        checks = self._build_checks_string(hop)
-        egress = self._build_egress_string(hop)
-        verdict_str = hop.verdict.value.upper()
-        v_color = "#00ff88" if hop.verdict == HopVerdict.HEALTHY else "#ffcc00"
-        if hop.verdict in (HopVerdict.NO_ROUTE, HopVerdict.BLACKHOLE,
-                           HopVerdict.UNREACHABLE, HopVerdict.INTERFACE_DOWN):
-            v_color = "#ff4444"
-
-        basic_line = f"  [{v_color}]hop {hop_index}: {hostname} → {verdict_str}[/]"
-        if is_connected:
-            basic_line += "  (connected)"
-        if egress:
-            basic_line += f"  {egress}"
-        if via_default:
-            basic_line += "  [#ffcc00]\\[via default][/]"
-        if hop.next_device_ips and len(hop.next_device_ips) > 1:
-            basic_line += f"  [#00d4ff]ECMP: {len(hop.next_device_ips)} paths[/]"
-
-        basic = [basic_line]
-
-        # ECMP paths on separate lines for basic
-        if hop.next_device_ips and len(hop.next_device_ips) > 1 and hop.resolutions:
-            for i, res in enumerate(hop.resolutions):
-                if res.egress_interface and res.next_hop_ip:
-                    basic.append(
-                        f"    {res.egress_interface.name} → {res.next_hop_ip}"
-                    )
-
-        # ── Verbose: per-command parse results ──
-        verbose = []
-        for cmd_rec in hop_diag.commands:
-            parse_ok = cmd_rec.parse_result in (ParseResult.OK, ParseResult.PARTIAL)
-            p_icon = "[#00ff88][✓][/]" if parse_ok else "[#ff4444][✗][/]"
-            parser_str = f" via {cmd_rec.parser_used}" if cmd_rec.parser_used else ""
-
-            verbose.append(f"  [#888888][✓] {cmd_rec.command}[/] parse:{p_icon}{parser_str}")
-
-        # Verdict separator
-        if hop_diag.verdict:
-            vr = hop_diag.verdict
-            v_val = vr.verdict if hasattr(vr, 'verdict') else str(vr)
-            verbose.append(f"  ─── [{v_color}]Verdict: {v_val}[/] ───")
-            if hasattr(vr, 'route_detail') and vr.route_detail:
-                detail = vr.route_detail
-                if via_default:
-                    detail = f"[#ffcc00]\\[via default][/] {detail}"
-                verbose.append(f"    route: {detail}")
-        verbose.append("")
-
-        # ── Debug: verbose + raw output excerpts ──
-        debug = []
-        for cmd_rec in hop_diag.commands:
-            parse_ok = cmd_rec.parse_result in (ParseResult.OK, ParseResult.PARTIAL)
-            p_icon = "[#00ff88][✓][/]" if parse_ok else "[#ff4444][✗][/]"
-            parser_str = f" via {cmd_rec.parser_used}" if cmd_rec.parser_used else ""
-
-            debug.append(f"  [#888888][✓] {cmd_rec.command}[/] parse:{p_icon}{parser_str}")
-
-            # Raw output excerpt (first 120 chars of each line, max 3 lines)
-            if cmd_rec.raw_output:
-                for line in cmd_rec.raw_output.strip().splitlines()[:3]:
-                    line = line.strip()[:120]
-                    if line:
-                        debug.append(f"    [#444444]{line}[/]")
-
-            # Parse detail (what matched or why it failed)
-            if cmd_rec.parse_detail:
-                debug.append(f"    [#444444]{cmd_rec.parse_detail}[/]")
-
-            # Error message if command errored
-            if cmd_rec.error_message:
-                debug.append(f"    [#ff4444]{cmd_rec.error_message}[/]")
-
-            # Timing
-            if cmd_rec.duration_ms:
-                debug.append(f"    [#444444]elapsed: {cmd_rec.duration_ms:.0f}ms[/]")
-
-        if hop_diag.verdict:
-            vr = hop_diag.verdict
-            v_val = vr.verdict if hasattr(vr, 'verdict') else str(vr)
-            debug.append(f"  ─── [{v_color}]Verdict: {v_val}[/] ───")
-            if hasattr(vr, 'route_detail') and vr.route_detail:
-                debug.append(f"    route: {vr.route_detail}")
-            if hasattr(vr, 'fib_detail') and vr.fib_detail:
-                debug.append(f"    fib: {vr.fib_detail}")
-            if hasattr(vr, 'nh_detail') and vr.nh_detail:
-                debug.append(f"    nh: {vr.nh_detail}")
-            if hasattr(vr, 'link_detail') and vr.link_detail:
-                debug.append(f"    link: {vr.link_detail}")
-        debug.append("")
-
-        return basic, verbose, debug
 
     # ────────────────────────────────────────────
     # Main Walk
@@ -619,40 +414,6 @@ class ChainWalker:
                     verdict=HopVerdict.UNREACHABLE.value,
                 )
                 self._diagnostics.hops.append(hop_diag)
-
-                # Emit unreachable to TUI
-                self._emit(HopEvent(
-                    event="hop_start",
-                    device=f"unreachable-{item.ssh_target}",
-                    ip=item.ssh_target,
-                    parent_device=item.parent_hostname,
-                    log_basic=[
-                        f"[#ff4444]Cannot reach {item.ssh_target}[/]",
-                    ],
-                ))
-                self._emit(HopEvent(
-                    event="hop_done",
-                    device=f"unreachable-{item.ssh_target}",
-                    ip=item.ssh_target,
-                    parent_device=item.parent_hostname,
-                    verdict=TuiVerdict.UNREACHABLE,
-                    checks="unreachable",
-                    log_basic=[
-                        f"  [#ff4444]hop {hop_index}: unreachable-{item.ssh_target} → UNREACHABLE[/]",
-                    ],
-                    log_verbose=[
-                        f"  [#ff4444]SSH connection failed to {item.ssh_target}[/]",
-                        f"  ─── [#ff4444]Verdict: unreachable[/] ───",
-                        "",
-                    ],
-                    log_debug=[
-                        f"  [#ff4444]SSH connection failed to {item.ssh_target}[/]",
-                        f"    [#444444]parent: {item.parent_hostname or 'none'}, "
-                        f"interface: {item.parent_interface or 'none'}[/]",
-                        f"  ─── [#ff4444]Verdict: unreachable[/] ───",
-                        "",
-                    ],
-                ))
                 hop_index += 1
                 continue
 
@@ -719,28 +480,6 @@ class ChainWalker:
             platform, fp_record = self._fingerprint_device(client, identity)
             identity.platform = platform
 
-            # ── 4b. Emit hop_start to TUI ──
-            self._emit(HopEvent(
-                event="hop_start",
-                device=identity.hostname,
-                ip=item.ssh_target,
-                parent_device=item.parent_hostname,
-                platform=platform.value,
-                log_basic=[
-                    f"[#00d4ff]Connecting to {identity.hostname}[/] ({item.ssh_target})",
-                ],
-                log_verbose=[
-                    f"[#00d4ff]Connecting to {identity.hostname}[/] ({item.ssh_target})",
-                    f"  Platform detected: [bold]{platform.value}[/]",
-                ],
-                log_debug=[
-                    f"[#00d4ff]Connecting to {identity.hostname}[/] ({item.ssh_target})",
-                    f"  Prompt detected: [bold]{identity.prompt_raw}[/]",
-                    f"  Platform detected: [bold]{platform.value}[/]"
-                    + (f" (confidence: {fp_record.confidence})" if fp_record else ""),
-                ],
-            ))
-
             # ── 5. Gather forwarding state ──
             hop, hop_diag = self._gather_forwarding_state(
                 client, identity, hop_index
@@ -755,30 +494,6 @@ class ChainWalker:
                 self._chain.hops.append(hop)
             if hop_diag is not None:
                 self._diagnostics.hops.append(hop_diag)
-
-            # ── 5b. Emit hop_done to TUI ──
-            if hop is not None and hop_diag is not None:
-                is_connected = (hop.is_terminal and hop.route
-                                and hop.route.is_connected)
-                via_default = any("default route" in n for n in hop.notes)
-
-                basic, verbose, debug = self._build_log_lines(
-                    hop_diag, hop, identity, via_default, hop_index
-                )
-                self._emit(HopEvent(
-                    event="hop_done",
-                    device=identity.hostname,
-                    ip=item.ssh_target,
-                    parent_device=item.parent_hostname,
-                    platform=platform.value,
-                    verdict=self._verdict_to_tui(hop.verdict, is_connected),
-                    checks=self._build_checks_string(hop),
-                    egress=self._build_egress_string(hop),
-                    notes=self._build_hop_notes(hop, via_default),
-                    log_basic=basic,
-                    log_verbose=verbose,
-                    log_debug=debug,
-                ))
 
             hop_index += 1
 
@@ -852,48 +567,6 @@ class ChainWalker:
             f"{elapsed:.1f}s → {self._chain.status.value}"
         )
         logger.info(f"Devices visited: {', '.join(sorted(self._visited))}")
-
-        # Emit trace_done to TUI
-        self._emit(HopEvent(
-            event="trace_done",
-            total_devices=self._chain.total_devices,
-            ecmp_branches=self._chain.ecmp_branch_points,
-            duration=elapsed,
-            is_healthy=self._chain.is_healthy,
-            status=self._chain.status.value,
-            log_basic=[
-                "",
-                f"[#00ff88]━━━ Trace complete ━━━[/]",
-                f"  Status: [{('#00ff88' if self._chain.is_healthy else '#ff4444')}]"
-                f"{self._chain.status.value.upper()}[/] │ "
-                f"{self._chain.total_devices} devices │ "
-                f"{self._chain.ecmp_branch_points} ECMP branches │ {elapsed:.1f}s",
-            ],
-            log_verbose=[
-                "",
-                f"[#00ff88]━━━ Trace complete ━━━[/]",
-                f"  Status: [{('#00ff88' if self._chain.is_healthy else '#ff4444')}]"
-                f"{self._chain.status.value.upper()}[/] │ "
-                f"{self._chain.total_devices} devices │ "
-                f"{self._chain.ecmp_branch_points} ECMP branches │ {elapsed:.1f}s",
-                f"  {'All paths healthy — forwarding chain validated end-to-end' if self._chain.is_healthy else 'Issues detected — see verdicts above'}",
-            ] + ([f"  Anomalies: {', '.join(self._chain.anomalies)}"]
-                 if self._chain.anomalies else []),
-            log_debug=[
-                "",
-                f"[#00ff88]━━━ Trace complete ━━━[/]",
-                f"  Status: [{('#00ff88' if self._chain.is_healthy else '#ff4444')}]"
-                f"{self._chain.status.value.upper()}[/] │ "
-                f"{self._chain.total_devices} devices │ "
-                f"{self._chain.ecmp_branch_points} ECMP branches │ {elapsed:.1f}s",
-                f"  {'All paths healthy' if self._chain.is_healthy else 'Issues detected'}",
-                f"  [#444444]BFS depth: {max((h.depth for h in [item] if hasattr(item, 'depth')), default='?')}, "
-                f"visited: {{{', '.join(sorted(self._visited))}}}[/]",
-                f"  [#444444]Total SSH sessions: {len(self._visited)}, "
-                f"total commands: {sum(len(h.commands) for h in self._diagnostics.hops)}[/]",
-            ] + ([f"  [#ffcc00]Anomalies: {', '.join(self._chain.anomalies)}[/]"]
-                 if self._chain.anomalies else []),
-        ))
 
         # Dump diagnostics if requested
         if self.config.log_file:

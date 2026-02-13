@@ -1,5 +1,3 @@
-"""Entry point for python -m fibtrace"""
-from fibtrace.walker import main
-
-if __name__ == "__main__":
-    main()
+"""Run the fibtrace TUI: python -m fibtrace_tui [--demo]"""
+from .app import main
+main()

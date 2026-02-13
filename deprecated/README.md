@@ -23,61 +23,9 @@ At each hop, fibtrace asks four questions:
 
 Then it follows the next-hop to the next device and repeats. The walk continues until it reaches a connected route (end of path), a black hole (problem found), or an unresolvable next-hop (problem found). ECMP paths are followed as a tree — every branch is validated, not just one.
 
-## Quick Start
-
-```bash
-pip install paramiko textual rich
-
-# TUI mode (default) — live tree + log visualization
-python -m fibtrace -p 10.0.0.0/24 -s 172.16.1.1 -u admin --password secret
-
-# Demo mode — replay a mock 6-hop ECMP trace (no network needed)
-python -m fibtrace --demo
-
-# Host address (auto /32 for IPv4, auto /128 for IPv6)
-python -m fibtrace -p 172.16.11.41 -s 172.16.1.6 -u admin --password secret
-python -m fibtrace -p 2001:db8:1dc11::14 -s 172.17.1.29 -u admin --password secret
-
-# IPv6 trace (management plane stays IPv4)
-python -m fibtrace -p 2001:db8:1dc11::14/128 -s 172.17.1.29 -u admin --password secret
-
-# Legacy SSH devices (old ciphers/KEX)
-python -m fibtrace -p 10.0.0.0/24 -s 172.16.1.1 -u admin --password secret --legacy-ssh
-
-# Skip MAC table lookups (faster on pure L3 paths)
-python -m fibtrace -p 10.0.0.0/24 -s 172.16.1.1 -u admin --password secret --skip-mac
-
-# DNS domain suffix for neighbor discovery
-python -m fibtrace -p 10.0.0.0/24 -s 172.16.1.1 -u admin --password secret --domain example.com
-
-# JSON output for scripting (headless, no TUI)
-python -m fibtrace -p 10.0.0.0/24 -s 172.16.1.1 -u admin --password secret --json
-
-# Full diagnostic dump to JSON
-python -m fibtrace -p 10.0.0.0/24 -s 172.16.1.1 -u admin --password secret --log /tmp/trace.json
-```
-
-## TUI
-
-fibtrace runs as a terminal application with a split-pane layout: a forwarding tree on the left and a live log on the right. Devices appear in the tree as they're discovered, with a spinner while probing and a verdict icon when complete. ECMP branches fork visually as sibling nodes.
-
-![fibtrace TUI — verbose mode showing a 6-hop ECMP trace across Cisco IOS and Arista EOS](screenshots/tui1.png)
-
-Three log verbosity levels, toggled live with a keypress:
-
-| Key | Level | Shows |
-|-----|-------|-------|
-| `b` | **Basic** | Connection events, per-hop verdicts, ECMP notifications, final summary |
-| `v` | **Verbose** | + every command sent, parser result (✓/✗), parser type, verdict reasoning |
-| `d` | **Debug** | + raw command output excerpts, parse detail, prompt/platform confidence, timing |
-
-![fibtrace TUI — debug mode showing raw command output and JSON parse results per hop](screenshots/tui_debug.png)
-
-The status bar shows completion state, device count, ECMP branches, elapsed time, active log level, and keybindings. Press `q` to quit.
-
 ### Default Route Fallback
 
-When a device has no specific route for the target prefix, fibtrace doesn't stop. It checks for a default route (`0.0.0.0/0` or `::/0`) and continues the walk through it — because that's what the device would actually do with the traffic. The hop is annotated with `[via default]` in the tree so you can see exactly where the specific routing ends and default forwarding takes over. Only when there's no specific route *and* no default does fibtrace declare `NO_ROUTE`.
+When a device has no specific route for the target prefix, fibtrace doesn't stop. It checks for a default route (`0.0.0.0/0` or `::/0`) and continues the walk through it — because that's what the device would actually do with the traffic. The hop is annotated with `[via default]` so you can see exactly where the specific routing ends and default forwarding takes over. Only when there's no specific route *and* no default does fibtrace declare `NO_ROUTE`.
 
 ### Neighbor Discovery Fallback
 
@@ -109,13 +57,130 @@ When the ND table is empty (common on devices without IPv6 addresses on the tran
 fe80::e3f:42ff:fef4:b565 → flip bit 7, remove ff:fe → MAC 0c:3f:42:f4:b5:65 → ARP search → IPv4
 ```
 
-This happens transparently. The tree shows both the data-plane next-hop and the resolved management target:
+This happens transparently. The summary output shows both the data-plane next-hop and the resolved management target:
 
 ```
 ge-0/0/0.0 → fe80::ea6:5aff:fe8b:9033 (→ 172.17.1.23)
 ```
 
 No LLDP, no CDP, no topology database required — just the forwarding tables the device already has.
+
+## Quick Start
+
+```bash
+pip install paramiko
+
+# Basic IPv4 trace
+python -m fibtrace -p 10.0.0.0/24 -s 172.16.1.1 -u admin --password secret
+
+# IPv6 trace (management plane stays IPv4)
+python -m fibtrace -p 2001:db8:1dc11::14/128 -s 172.17.1.29 -u admin --password secret
+
+# Host address (auto /32 for IPv4, auto /128 for IPv6)
+python -m fibtrace -p 172.16.11.41 -s 172.16.1.6 -u admin --password secret
+python -m fibtrace -p 2001:db8:1dc11::14 -s 172.17.1.29 -u admin --password secret
+
+# Verbose — per-hop detail during the walk
+python -m fibtrace -p 10.0.0.0/24 -s 172.16.1.1 -u admin --password secret -v
+
+# Full diagnostic dump to JSON
+python -m fibtrace -p 10.0.0.0/24 -s 172.16.1.1 -u admin --password secret --log /tmp/trace.json
+
+# JSON output for scripting
+python -m fibtrace -p 10.0.0.0/24 -s 172.16.1.1 -u admin --password secret --json
+
+# Legacy SSH devices (old ciphers/KEX)
+python -m fibtrace -p 10.0.0.0/24 -s 172.16.1.1 -u admin --password secret --legacy-ssh
+
+# Skip MAC table lookups (faster on pure L3 paths)
+python -m fibtrace -p 10.0.0.0/24 -s 172.16.1.1 -u admin --password secret --skip-mac
+
+# DNS domain suffix for neighbor discovery
+python -m fibtrace -p 10.0.0.0/24 -s 172.16.1.1 -u admin --password secret --domain example.com
+```
+
+## Real Output
+
+Six-hop IPv4 trace starting from a Cisco IOS L2 switch with no specific route — fibtrace follows the default route, then continues across Arista EOS and Cisco IOS with ECMP fan-out at hop 3:
+
+```
+fibtrace: 172.16.11.41/32 from usa-leaf-3
+──────────────────────────────────────────────────
+  hop 0: usa-leaf-3           | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  Vlan10 → 172.16.10.1
+  hop 1: usa-spine-2          | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  Ethernet1 → 172.16.1.5
+  hop 2: usa-rtr-1            | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  GigabitEthernet0/3 → 172.16.128.6
+  hop 3: eng-rtr-1            | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  GigabitEthernet0/2 → 172.16.2.2, GigabitEthernet0/3 → 172.16.2.6
+  hop 4: eng-spine-1          | route ✓ fib — nh — link — → HEALTHY (connected)  Vlan11
+  hop 5: eng-spine-2          | route ✓ fib — nh — link — → HEALTHY (connected)  Vlan11
+──────────────────────────────────────────────────
+Status: COMPLETE | 6 devices | 1 ECMP branches | 95.4s
+```
+
+Hop 0 has no specific route for the /32 — fibtrace detects the default route (`0.0.0.0/0 via 172.16.10.1`), validates the FIB entry (`recursive via` resolved through Vlan10), confirms ARP resolution, and continues the walk. Verbose mode shows the fallback:
+
+```
+  [✓] show ip route 172.16.11.41 parse:[✗] via regex       ← no specific route
+  [✓] show ip route 0.0.0.0 0.0.0.0 parse:[✓] via regex   ← default route found
+  [✓] show ip cef 0.0.0.0 0.0.0.0 detail parse:[✓] via regex
+  [✓] show ip arp 172.16.10.1 parse:[✓] via regex
+  [✓] show interfaces Vlan10 parse:[✓] via regex
+  ─── Verdict: healthy ───
+    route:  [via default] static via 172.16.10.1 on ?
+```
+
+Five-hop trace starting from an Arista EOS spine (same path, no default route needed):
+
+```
+fibtrace: 172.16.11.41/32 from usa-spine-2
+──────────────────────────────────────────────────
+  hop 0: usa-spine-2          | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  Ethernet1 → 172.16.1.5
+  hop 1: usa-rtr-1            | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  GigabitEthernet0/3 → 172.16.128.6
+  hop 2: eng-rtr-1            | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  GigabitEthernet0/2 → 172.16.2.2, GigabitEthernet0/3 → 172.16.2.6
+  hop 3: eng-spine-1          | route ✓ fib — nh — link — → HEALTHY (connected)  Vlan11
+  hop 4: eng-spine-2          | route ✓ fib — nh — link — → HEALTHY (connected)  Vlan11
+──────────────────────────────────────────────────
+Status: COMPLETE | 5 devices | 1 ECMP branches | 77.0s
+```
+
+Four-hop IPv4 trace across Juniper vMX (14.1) and Arista EOS, mixed vendor path:
+
+```
+fibtrace: 172.17.1.29/32 from border01
+──────────────────────────────────────────────────
+  hop 0: border01          | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  ge-0/0/0.0 → 172.17.1.23
+  hop 1: agg1            | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  Port-Channel1 → 172.17.1.10
+  hop 2: border1-01        | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  ge-0/0/2.0 → 172.17.1.26
+  hop 3: border5-01        | route ✓ fib — nh — link — → HEALTHY (connected)  ge-0/0/1.0
+──────────────────────────────────────────────────
+Status: COMPLETE | 4 devices | 0 ECMP branches | 58.8s
+```
+
+Three-hop IPv6 trace across Arista EOS and Juniper Junos with link-local next-hops (OSPFv3):
+
+```
+fibtrace: 2001:db8:1dc11::14/128 from spine-01
+──────────────────────────────────────────────────
+  hop 0: spine-01         | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  Ethernet1 → fe80::205:86ff:fe71:5b01 (→ 172.17.1.28)
+  hop 1: border5-01        | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  ge-0/0/0.0 → fe80::205:86ff:fe71:8503 (→ 172.17.1.33)
+  hop 2: border1-02        | route ✓ fib — nh — link — → HEALTHY (connected)  lo0.0
+──────────────────────────────────────────────────
+Status: COMPLETE | 3 devices | 0 ECMP branches | 46.5s
+```
+
+Four-hop IPv6 trace originating from Cisco IOS, across Arista EOS and Juniper Junos — three vendors, link-local resolution via EUI-64 fallback at the IOS hop:
+
+```
+fibtrace: 2001:db8:1dc11::12/128 from access-sw1
+──────────────────────────────────────────────────
+  hop 0: access-sw1               | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  GigabitEthernet0/0 → fe80::e3f:42ff:fef4:b565 (→ 172.17.202.1)
+  hop 1: spine-01         | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  Ethernet1 → fe80::205:86ff:fe71:5b01 (→ 172.17.1.28)
+  hop 2: border5-01        | route ✓ fib ✓ nh ✓ link ✓ → HEALTHY  ge-0/0/2.0 → fe80::205:86ff:fe71:3902 (→ 172.17.1.27)
+  hop 3: border1-01        | route ✓ fib — nh — link — → HEALTHY (connected)  lo0.0
+──────────────────────────────────────────────────
+Status: COMPLETE | 4 devices | 0 ECMP branches | 80.0s
+```
+
+Each line shows: the device hostname, the four forwarding checks (route/FIB/next-hop/link), the verdict, the egress interface(s), and where traffic goes next. For IPv6 link-local next-hops, the resolved IPv4 SSH target is shown in parentheses.
 
 ## Supported Platforms
 
@@ -155,34 +220,13 @@ The error counter threshold is configurable (`--error-threshold`, default 100). 
 fibtrace/
 ├── __init__.py              # Package exports
 ├── __main__.py              # python -m fibtrace entry point
-├── app.py                   # Textual TUI — tree + log split-pane, live walker integration
 ├── client.py                # SSH client (Paramiko invoke-shell wrapper)
-├── commands_and_parsers.py  # Platform fingerprinting, command sets, AF-aware dispatch
-├── diagnostics.py           # Structured diagnostic capture and formatters
-├── events.py                # HopEvent dataclass — walker ↔ TUI contract
 ├── models.py                # Vendor-neutral forwarding data models (dual-stack)
+├── commands_and_parsers.py  # Platform fingerprinting, command sets, AF-aware dispatch
 ├── parsers.py               # Platform parsers: raw CLI output → model dataclasses
-├── theme.tcss               # TUI dark terminal theme (Textual CSS)
+├── diagnostics.py           # Structured diagnostic capture and formatters
 └── walker.py                # BFS chain walker, verdict assessment, neighbor discovery
 ```
-
-### Walker ↔ TUI Integration
-
-The walker is synchronous (Paramiko blocking SSH). The TUI is async (Textual event loop). They communicate through a single shared type — `HopEvent` — defined in `events.py`. Neither side imports the other.
-
-```
-Walker thread                    TUI async loop
-─────────────                    ──────────────
-ChainWalker.walk()               FibTraceApp._run_live_trace()
-  ├─ connect, fingerprint          │
-  ├─ emit(hop_start) ──queue.put──→├─ queue.get() → _add_pending_node()
-  ├─ gather forwarding state       │
-  ├─ emit(hop_done)  ──queue.put──→├─ queue.get() → _update_node_verdict()
-  ├─ enqueue next-hops             │
-  └─ emit(trace_done) ─queue.put──→└─ queue.get() → _update_status()
-```
-
-The walker pushes `HopEvent` objects into a thread-safe `queue.Queue`. The TUI polls at 50ms and processes events on the main Textual thread. No callback set? Zero overhead — the walker runs identically in headless mode.
 
 ### Design Decisions
 
@@ -198,9 +242,9 @@ The walker pushes `HopEvent` objects into a thread-safe `queue.Queue`. The TUI p
 
 **Hostname-based device tracking.** Devices are identified by the hostname extracted from the CLI prompt, not by the SSH target IP. In real networks, the same device is reachable via multiple IPs (management, loopback, transit interfaces), and different devices can share IPs (unnumbered interfaces, overlapping transit subnets). The prompt is the canonical identity. This means loop detection is post-connection — one SSH handshake is burned to discover a revisit. Acceptable for chains of 3–15 devices.
 
-**BFS tree walk.** ECMP at any hop creates branches. fibtrace walks breadth-first: all devices at depth N are evaluated before depth N+1. Loop detection via visited hostname set catches cycles at the shallowest depth. ECMP convergence (sibling paths reconverging on the same device) is distinguished from real loops via ancestor tracking — each queue item carries a frozenset of hostnames on its path from the root.
+**BFS tree walk.** ECMP at any hop creates branches. fibtrace walks breadth-first: all devices at depth N are evaluated before depth N+1. Loop detection via visited hostname set catches cycles at the shallowest depth.
 
-**Diagnostic-first.** Every command execution is wrapped in a diagnostic record: the exact command sent, the full raw output, which parser was used, what it extracted (or why it failed), and wall-clock timing. Parser failures are never silent. Three TUI log levels (basic/verbose/debug) surface increasing diagnostic detail in real time, and `--log` dumps the full JSON post-mortem.
+**Diagnostic-first.** Every command execution is wrapped in a diagnostic record: the exact command sent, the full raw output, which parser was used, what it extracted (or why it failed), and wall-clock timing. Parser failures are never silent. Three output levels: summary (always), verbose (`-v`), and full JSON dump (`--log`).
 
 ### Parser Strategy
 
@@ -243,7 +287,7 @@ usage: python -m fibtrace [-h] -p PREFIX -s SOURCE -u USERNAME
                           [--max-depth MAX_DEPTH] [--timeout TIMEOUT]
                           [--legacy-ssh] [--error-threshold ERROR_THRESHOLD]
                           [--skip-mac] [--domain DOMAIN]
-                          [--log LOG] [--json] [--demo]
+                          [-v] [--debug] [--log LOG] [--json]
 
 Arguments:
   -p, --prefix          Target prefix (e.g., 10.0.0.0/24, 172.16.1.1,
@@ -264,15 +308,10 @@ Options:
                         'rtr03.example.com')
 
 Output:
+  -v, --verbose         Print per-hop summaries during the walk
+  --debug               Debug-level logging
   --log FILE            Write full diagnostic JSON to file
-  --json                Output chain result as JSON (headless, no TUI)
-  --demo                Run with mock trace data (no network needed)
-
-TUI Controls:
-  b                     Basic log level — verdicts and connection events
-  v                     Verbose — per-command parse results and verdict reasoning
-  d                     Debug — raw output excerpts, timing, parser detail
-  q                     Quit
+  --json                Output chain result as JSON (for scripting)
 ```
 
 ## JSON Output
@@ -309,14 +348,13 @@ With `--log FILE`, fibtrace writes a full diagnostic JSON dump including every c
 
 - Python 3.10+
 - paramiko
-- textual
-- rich
 
 ## Roadmap
 
-The core walk engine and TUI are proven across both address families and four vendor platforms. These are the next targets, roughly in priority order:
+The core walk engine is proven across both address families. These are the next targets, roughly in priority order:
 
 - **Speed** — Async/parallel SSH within a BFS level. The two ECMP branches at a given depth connect sequentially today; they could connect simultaneously.
+- **TUI dashboard** — Textual-based tree view with color-coded verdicts, drill-down into any hop for full diagnostics. Same pattern as [TerminalTelemetry](https://github.com/scottpeterman/terminaltelemetry).
 - **TextFSM templates** — Replace IOS regex parsers with NTC-templates for better cross-version reliability.
 - **NX-OS IPv6 parsers** — v6 command templates are in place; ND and ARP-by-MAC parsers needed for NX-OS to complete quad-platform v6 coverage.
 - **MPLS label path tracing** — Models include label stacks and LFIB lookups. Parsers and walker integration needed.

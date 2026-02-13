@@ -1,23 +1,5 @@
-"""
-fibtrace — Hop-by-hop forwarding chain validation from the device perspective.
+"""fibtrace TUI — live forwarding chain visualization."""
+from .events import HopEvent, TuiVerdict, LogLevel, VERDICT_STYLE
+from .app import FibTraceApp
 
-Not a traceroute — a FIB trace.
-"""
-
-__version__ = "0.1.0"
-
-from .models import (
-    Prefix, AddressFamily,
-    RouteEntry, RouteProtocol, RouteNextHop,
-    FibEntry, FibState, FibNextHop,
-    ArpEntry, ArpState, MacTableEntry, MacAddress,
-    Interface, InterfaceState, InterfaceCounters,
-    NextHopResolution,
-    DeviceInfo, Hop, HopVerdict,
-    ForwardingChain, ChainStatus,
-    Encapsulation, EncapType, MplsLabelStack,
-)
-
-from .commands_and_parsers import Platform
-from .walker import ChainWalker, WalkerConfig
-from .diagnostics import ChainDiagnostic, HopDiagnostic
+__all__ = ["FibTraceApp", "HopEvent", "TuiVerdict", "LogLevel", "VERDICT_STYLE"]
