@@ -61,7 +61,7 @@ python -m fibtrace -p 10.0.0.0/24 -s 172.16.1.1 -u admin --password secret --log
 
 fibtrace runs as a terminal application with a split-pane layout: a forwarding tree on the left and a live log on the right. Devices appear in the tree as they're discovered, with a spinner while probing and a verdict icon when complete. ECMP branches fork visually as sibling nodes.
 
-![fibtrace TUI — verbose mode showing a 6-hop ECMP trace across Cisco IOS and Arista EOS](screenshots/tui1.png)
+![fibtrace TUI — verbose mode showing a 6-hop ECMP trace across Cisco IOS and Arista EOS](https://raw.githubusercontent.com/scottpeterman/fibtrace/main/screenshots/tui1.png)
 
 Three log verbosity levels, toggled live with a keypress:
 
@@ -71,7 +71,7 @@ Three log verbosity levels, toggled live with a keypress:
 | `v` | **Verbose** | + every command sent, parser result (✓/✗), parser type, verdict reasoning |
 | `d` | **Debug** | + raw command output excerpts, parse detail, prompt/platform confidence, timing |
 
-![fibtrace TUI — debug mode showing raw command output and JSON parse results per hop](screenshots/tui_debug.png)
+![fibtrace TUI — debug mode showing raw command output and JSON parse results per hop](https://raw.githubusercontent.com/scottpeterman/fibtrace/refs/heads/main/screenshots/tui_debug.png)
 
 The status bar shows completion state, device count, ECMP branches, elapsed time, active log level, and keybindings. Press `q` to quit.
 
@@ -328,3 +328,4 @@ The core walk engine and TUI are proven across both address families and four ve
 ## License
 
 MIT
+
