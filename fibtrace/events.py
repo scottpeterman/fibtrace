@@ -33,6 +33,7 @@ class TuiVerdict(Enum):
     INTERFACE_DOWN = "interface_down"
     INTERFACE_ERRORS = "interface_errors"
     UNREACHABLE = "unreachable"
+    CONVERGENCE = "convergence"
 
 
 # Verdict → (color, icon) for the tree pane
@@ -46,6 +47,7 @@ VERDICT_STYLE: dict[TuiVerdict, tuple[str, str]] = {
     TuiVerdict.INTERFACE_DOWN:    ("#ff4444", "▼"),
     TuiVerdict.INTERFACE_ERRORS:  ("#ff8800", "⚠"),
     TuiVerdict.UNREACHABLE:       ("#ff4444", "✗"),
+    TuiVerdict.CONVERGENCE:       ("#00d4ff", "↪"),
 }
 
 

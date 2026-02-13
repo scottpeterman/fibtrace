@@ -300,6 +300,7 @@ class ChainWalker:
             HopVerdict.INTERFACE_DOWN: TuiVerdict.INTERFACE_DOWN,
             HopVerdict.INTERFACE_ERRORS: TuiVerdict.INTERFACE_ERRORS,
             HopVerdict.UNREACHABLE: TuiVerdict.UNREACHABLE,
+            HopVerdict.CONVERGENCE: TuiVerdict.CONVERGENCE,
         }
         return mapping.get(verdict, TuiVerdict.HEALTHY)
 
@@ -314,7 +315,12 @@ class ChainWalker:
             return "route ✓ fib — nh — link —"
 
         r = "✓" if hop.route else "✗"
-        f = "✓" if (hop.fib and hop.fib.is_forwarding) else "✗"
+        if hop.fib and hop.fib.is_forwarding:
+            f = "✓"
+        elif hop.fib is None:
+            f = "?"                     # parser gap — unverified, not failed
+        else:
+            f = "✗"
         n = "✓" if hop.resolutions and all(
             res.is_resolved for res in hop.resolutions) else "✗"
         link_ok = True
@@ -687,12 +693,68 @@ class ChainWalker:
                         f"(parent: {item.parent_hostname})"
                     )
                 else:
-                    # ECMP convergence — already visited via a sibling path
+                    # ECMP convergence — already visited via a sibling path.
+                    # Record a lightweight convergence hop so the tree and
+                    # summary output can show where branches reconverge.
                     logger.info(
                         f"ECMP convergence: {item.ssh_target} is "
                         f"{identity.hostname} (visited via different branch, "
                         f"parent: {item.parent_hostname})"
                     )
+
+                    convergence_hop = Hop(
+                        device=DeviceInfo(
+                            hostname=identity.hostname,
+                            ip_address=_parse_ip(item.ssh_target),
+                            platform=(identity.platform.value
+                                      if identity.platform else None),
+                        ),
+                        target_prefix=self._chain.target_prefix,
+                        verdict=HopVerdict.CONVERGENCE,
+                        notes=[
+                            f"ECMP convergence — already visited via "
+                            f"sibling branch"
+                        ],
+                        parent_hostname=item.parent_hostname,
+                        depth=item.depth,
+                        converges_to=identity.hostname,
+                    )
+                    self._chain.hops.append(convergence_hop)
+
+                    # Emit to TUI so the tree can render the convergence link
+                    self._emit(HopEvent(
+                        event="hop_done",
+                        device=identity.hostname,
+                        ip=item.ssh_target,
+                        parent_device=item.parent_hostname,
+                        platform=(identity.platform.value
+                                  if identity.platform else None),
+                        verdict=TuiVerdict.CONVERGENCE,
+                        checks="converges",
+                        notes=["(converges)"],
+                        log_basic=[
+                            f"  [#00d4ff]↪ {identity.hostname}[/] (converges)",
+                        ],
+                        log_verbose=[
+                            f"  [#00d4ff]↪ {identity.hostname}[/] — ECMP convergence "
+                            f"(already visited via sibling branch, "
+                            f"parent: {item.parent_hostname})",
+                            "",
+                        ],
+                        log_debug=[
+                            f"  [#00d4ff]↪ {identity.hostname}[/] — ECMP convergence",
+                            f"    [#444444]visited via: {item.ssh_target}, "
+                            f"parent: {item.parent_hostname}[/]",
+                            f"    [#444444]original visit cached at depth "
+                            f"{item.depth}[/]",
+                            "",
+                        ],
+                    ))
+
+                    self._progress(
+                        f"  ↪ {identity.hostname} (converges)"
+                    )
+
                 continue
 
             # ── Mark visited ──
@@ -752,6 +814,9 @@ class ChainWalker:
 
             # Add to chain and diagnostics
             if hop is not None:
+                # Attach tree structure so TUI/summary can render the tree
+                hop.parent_hostname = item.parent_hostname
+                hop.depth = item.depth
                 self._chain.hops.append(hop)
             if hop_diag is not None:
                 self._diagnostics.hops.append(hop_diag)
@@ -1887,15 +1952,16 @@ class ChainWalker:
         IMPORTANT: Interface errors are informational — they never stop the walk.
         The trace always continues to the next hop. The verdict truth table:
 
-            route?  fib?   nh?    link?  → verdict
-            ─────   ────   ────   ─────  ─────────
-            no      -      -      -      → NO_ROUTE
-            yes     drop   -      -      → BLACKHOLE
-            yes     no     -      -      → RIB_ONLY
-            yes     yes    no     -      → INCOMPLETE_ARP (walk continues!)
-            yes     yes    yes    down   → INTERFACE_DOWN (walk continues!)
-            yes     yes    yes    errs   → INTERFACE_ERRORS (walk continues!)
-            yes     yes    yes    up     → HEALTHY
+            route?  fib?       nh?    link?  → verdict
+            ─────   ────       ────   ─────  ─────────
+            no      -          -      -      → NO_ROUTE
+            yes     drop       -      -      → BLACKHOLE
+            yes     !fwd       -      -      → RIB_ONLY (genuine FIB miss)
+            yes     unverified yes    up     → HEALTHY (parser gap — note added)
+            yes     yes        no     -      → INCOMPLETE_ARP (walk continues!)
+            yes     yes        yes    down   → INTERFACE_DOWN (walk continues!)
+            yes     yes        yes    errs   → INTERFACE_ERRORS (walk continues!)
+            yes     yes        yes    up     → HEALTHY
         """
         notes = []
 
@@ -1905,19 +1971,21 @@ class ChainWalker:
         if route.is_connected:
             return HopVerdict.HEALTHY, "Connected route — end of chain", notes
 
-        # FIB checks
+        # FIB checks — distinguish real problems from parser gaps.
+        # A missing FIB entry might mean "parser couldn't handle this
+        # platform's output" rather than "not programmed." Don't
+        # short-circuit to RIB_ONLY — fall through and let NH/link
+        # checks determine whether forwarding is actually working.
+        fib_unverified = False
         if fib is None:
-            notes.append("Route in RIB but no FIB entry found — "
-                         "may be a parser issue or genuinely not programmed")
-            return HopVerdict.RIB_ONLY, "Route in RIB but no FIB entry", notes
-
-        if fib.state == FibState.DROP:
+            notes.append("FIB entry not verified (parser gap or "
+                         "platform limitation — not a forwarding failure)")
+            fib_unverified = True
+        elif fib.state == FibState.DROP:
             return HopVerdict.BLACKHOLE, "FIB entry is null/drop", notes
-
-        if fib.state == FibState.RECEIVE:
+        elif fib.state == FibState.RECEIVE:
             return HopVerdict.HEALTHY, "Destined to this device (receive)", notes
-
-        if not fib.is_forwarding and fib.state != FibState.GLEAN:
+        elif not fib.is_forwarding and fib.state != FibState.GLEAN:
             notes.append(f"FIB state is {fib.state.value} — not actively forwarding")
             return HopVerdict.RIB_ONLY, f"FIB state: {fib.state.value}", notes
 
@@ -2001,6 +2069,8 @@ class ChainWalker:
             notes.append(worst[1])
             return HopVerdict.INTERFACE_ERRORS, worst[1], notes
 
+        if fib_unverified:
+            return HopVerdict.HEALTHY, "Route → FIB (unverified) → resolved → link clean", notes
         return HopVerdict.HEALTHY, "Route → FIB → resolved → link clean", notes
 
     # ────────────────────────────────────────────
@@ -2307,6 +2377,10 @@ def main():
                     "is_terminal": h.is_terminal,
                     "next_hops": [str(ip) for ip in h.next_device_ips],
                     "notes": h.notes,
+                    "parent": h.parent_hostname,
+                    "depth": h.depth,
+                    **({"converges_to": h.converges_to}
+                       if h.converges_to else {}),
                 }
                 for h in chain.hops
             ],
@@ -2321,6 +2395,14 @@ def main():
 
         for hop in chain.hops:
             v = hop.verdict
+
+            # Convergence marker — not a real forwarding hop
+            if v == HopVerdict.CONVERGENCE:
+                conv_name = hop.converges_to or hop.device.hostname
+                print(f"  hop {chain.hops.index(hop)}: {conv_name:20s} | "
+                      f"↪ converges (visited via sibling ECMP branch)")
+                continue
+
             checks = ""
             is_connected = (hop.is_terminal and hop.route
                             and hop.route.is_connected)
@@ -2332,7 +2414,12 @@ def main():
                 checks = "route ✓ fib — nh — link —"
             else:
                 r = "✓" if hop.route else "✗"
-                f = "✓" if (hop.fib and hop.fib.is_forwarding) else "✗"
+                if hop.fib and hop.fib.is_forwarding:
+                    f = "✓"
+                elif hop.fib is None:
+                    f = "?"
+                else:
+                    f = "✗"
                 n = "✓" if hop.resolutions and all(
                     res.is_resolved for res in hop.resolutions) else "✗"
                 # Link check

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fibtrace"
-version = "0.2.1"
+version = "0.2.2"
 description = "Hop-by-hop forwarding chain validation from the device perspective. Not a traceroute — a FIB trace."
 readme = "README.md"
 license = {text = "MIT"}

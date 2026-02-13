@@ -289,6 +289,7 @@ class HopVerdict(Enum):
     INTERFACE_DOWN = "interface-down"
     INTERFACE_ERRORS = "interface-errors"
     UNREACHABLE = "unreachable"         # couldn't reach the device
+    CONVERGENCE = "convergence"         # ECMP paths reconverge here
     UNKNOWN = "unknown"
 
 
@@ -315,13 +316,28 @@ class Hop:
     # Where does the chain go next? (multiple = ECMP branch)
     next_device_ips: list[IPv4Address | IPv6Address] = field(default_factory=list)
 
+    # Tree structure — needed for TUI tree rendering and summary output
+    parent_hostname: Optional[str] = None   # who sent us here
+    depth: int = 0                          # BFS depth level
+
+    # ECMP convergence — this hop reconverges with a device
+    # already visited via a sibling branch. The tree renderer
+    # draws this as "→ hostname (converges)" instead of expanding.
+    converges_to: Optional[str] = None
+
     @property
     def is_terminal(self) -> bool:
+        if self.verdict == HopVerdict.CONVERGENCE:
+            return True
         if self.route and self.route.is_connected:
             return True
         if self.fib and self.fib.state in (FibState.DROP, FibState.RECEIVE):
             return True
         return not self.next_device_ips
+
+    @property
+    def is_convergence(self) -> bool:
+        return self.verdict == HopVerdict.CONVERGENCE
 
 
 # ============================================================
@@ -356,8 +372,16 @@ class ForwardingChain:
     def is_healthy(self) -> bool:
         return (
             self.status == ChainStatus.COMPLETE
-            and all(h.verdict == HopVerdict.HEALTHY for h in self.hops)
+            and all(
+                h.verdict in (HopVerdict.HEALTHY, HopVerdict.CONVERGENCE)
+                for h in self.hops
+            )
         )
+
+    @property
+    def forwarding_hops(self) -> list[Hop]:
+        """Hops that actually evaluated forwarding (excludes convergence markers)."""
+        return [h for h in self.hops if h.verdict != HopVerdict.CONVERGENCE]
 
     @property
     def duration(self) -> Optional[timedelta]:
