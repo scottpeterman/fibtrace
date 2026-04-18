@@ -1,0 +1,28 @@
+# Source distribution manifest.
+# TODO(content-phase): review once pyproject.toml is finalized. Modern
+# setuptools with a flat layout mostly picks up package-data from
+# [tool.setuptools.package-data] in pyproject.toml; MANIFEST.in is for
+# the sdist (source tarball) specifically.
+
+include README.md
+include LICENSE
+include CHANGELOG.md
+
+recursive-include fibtrace *.tcss *.html
+recursive-include fibtrace/web/templates *.html
+recursive-include fibtrace/web/static *
+
+# Excluded from the wheel/sdist:
+prune fibtrace/__pycache__
+prune tests
+prune examples
+prune traces
+
+exclude build_hosts.py
+exclude debug.json
+exclude drt_databank.json
+exclude hosts_all.txt
+exclude ports.txt
+exclude lab_juniper.json
+exclude qfx1-tor5.json
+exclude tor5-qfx1.json

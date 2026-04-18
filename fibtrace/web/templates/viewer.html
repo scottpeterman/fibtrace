@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>fibtrace — Graph Viewer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg-deep: #0a0e14;
+    --bg-surface: #0f1419;
+    --bg-card: #141a22;
+    --bg-hover: #1a2230;
+    --border-subtle: #1e2a3a;
+    --border-medium: #2a3a4e;
+    --text-primary: #e0e6ed;
+    --text-secondary: #8899aa;
+    --text-muted: #556677;
+    --accent-blue: #00d4ff;
+    --accent-green: #00e88f;
+    --accent-orange: #ffaa33;
+    --accent-red: #ff4466;
+    --accent-purple: #b48eff;
+    --accent-neon-purple: #cf5fff;
+    --accent-cyan: #00e5c7;
+  }
+
+  body {
+    background: var(--bg-deep);
+    color: var(--text-primary);
+    font-family: 'Outfit', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  .header {
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--bg-surface);
+  }
+  .header-left { display: flex; align-items: center; gap: 16px; }
+  .logo {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--accent-blue);
+  }
+  .logo span { color: var(--text-muted); font-weight: 400; }
+  .header-meta {
+    font-size: 13px;
+    color: var(--text-muted);
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .header-actions { display: flex; gap: 10px; }
+  .btn {
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--border-medium);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    font-family: 'Outfit', sans-serif;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-decoration: none;
+  }
+  .btn:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--accent-blue); }
+  .btn-primary { background: rgba(0,212,255,0.1); border-color: var(--accent-blue); color: var(--accent-blue); }
+  .btn-primary:hover { background: rgba(0,212,255,0.2); }
+
+  /* Drop zone */
+  .drop-zone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: calc(100vh - 52px);
+    gap: 20px;
+    transition: all 0.3s;
+  }
+  .drop-zone.drag-over { background: rgba(0, 212, 255, 0.03); }
+  .drop-icon {
+    width: 80px; height: 80px;
+    border: 2px dashed var(--border-medium);
+    border-radius: 16px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 32px;
+    color: var(--text-muted);
+    transition: all 0.3s;
+  }
+  .drop-zone.drag-over .drop-icon { border-color: var(--accent-blue); color: var(--accent-blue); }
+  .drop-text { font-size: 16px; color: var(--text-secondary); }
+  .drop-sub { font-size: 13px; color: var(--text-muted); }
+  .drop-sub a { color: var(--accent-blue); cursor: pointer; text-decoration: none; }
+  .drop-sub a:hover { text-decoration: underline; }
+  #fileInput { display: none; }
+
+  /* Main layout */
+  .main { display: none; height: calc(100vh - 52px); }
+  .main.active { display: flex; }
+
+  /* Sidebar */
+  .sidebar {
+    width: 320px; min-width: 320px;
+    border-right: 1px solid var(--border-subtle);
+    background: var(--bg-surface);
+    overflow-y: auto;
+  }
+  .sidebar-section { padding: 16px 20px; border-bottom: 1px solid var(--border-subtle); }
+  .sidebar-title {
+    font-size: 10px; font-weight: 600; letter-spacing: 1.5px;
+    text-transform: uppercase; color: var(--text-muted); margin-bottom: 12px;
+  }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stat { padding: 10px 12px; background: var(--bg-card); border-radius: 8px; border: 1px solid var(--border-subtle); }
+  .stat-value { font-family: 'JetBrains Mono', monospace; font-size: 20px; font-weight: 600; line-height: 1; }
+  .stat-label { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+  .stat-value.blue { color: var(--accent-blue); }
+  .stat-value.green { color: var(--accent-green); }
+  .stat-value.orange { color: var(--accent-orange); }
+  .stat-value.purple { color: var(--accent-purple); }
+
+  .path-item {
+    padding: 10px 12px; background: var(--bg-card); border-radius: 8px;
+    border: 1px solid var(--border-subtle); margin-bottom: 6px;
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    color: var(--text-secondary); cursor: pointer; transition: all 0.2s; line-height: 1.6;
+  }
+  .path-item:hover { border-color: var(--accent-blue); background: var(--bg-hover); }
+  .path-item.active { border-color: var(--accent-blue); background: rgba(0,212,255,0.05); }
+  .path-label { font-family: 'Outfit', sans-serif; font-size: 12px; font-weight: 500; color: var(--accent-blue); margin-bottom: 4px; }
+  .path-hop { color: var(--text-muted); }
+  .path-hop.ecmp { color: var(--accent-blue); }
+  .path-hop.convergence { color: var(--accent-orange); }
+  .path-arrow { color: var(--text-muted); margin: 0 2px; }
+
+  .node-detail { display: none; }
+  .node-detail.active { display: block; }
+  .detail-header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+  .detail-hostname { font-family: 'JetBrains Mono', monospace; font-size: 15px; font-weight: 600; }
+  .detail-badge { padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 600; letter-spacing: 0.5px; text-transform: uppercase; }
+  .badge-ecmp { background: rgba(0,212,255,0.15); color: var(--accent-blue); }
+  .badge-convergence { background: rgba(255,170,51,0.15); color: var(--accent-orange); }
+  .badge-terminal { background: rgba(0,232,143,0.15); color: var(--accent-green); }
+  .badge-unreachable { background: rgba(255,68,102,0.15); color: var(--accent-red); }
+  .detail-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-subtle); font-size: 13px; }
+  .detail-key { color: var(--text-muted); }
+  .detail-val { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--text-secondary); text-align: right; max-width: 180px; word-break: break-all; }
+
+  /* Canvas */
+  .canvas-area {
+    flex: 1; position: relative; overflow: hidden;
+    background: radial-gradient(circle at 50% 50%, rgba(0,212,255,0.02) 0%, transparent 60%), var(--bg-deep);
+  }
+  .canvas-area svg { width: 100%; height: 100%; cursor: grab; }
+  .canvas-area svg:active { cursor: grabbing; }
+
+  .node-group { cursor: pointer; }
+  .node-group:hover .node-box { filter: brightness(1.15); }
+  .node-box { rx: 10; ry: 10; stroke-width: 1.5; transition: filter 0.2s; }
+  .node-box-default { fill: var(--bg-card); stroke: var(--border-medium); }
+  .node-box-ecmp { fill: rgba(0,212,255,0.06); stroke: var(--accent-blue); }
+  .node-box-convergence { fill: rgba(255,170,51,0.06); stroke: var(--accent-orange); }
+  .node-box-terminal { fill: rgba(0,232,143,0.06); stroke: var(--accent-green); }
+  .node-box-unreachable { fill: rgba(255,68,102,0.06); stroke: var(--accent-red); }
+  .node-box-selected { stroke-width: 2.5; filter: brightness(1.2); }
+  .node-hostname { font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 600; fill: var(--text-primary); }
+  .node-platform { font-family: 'Outfit', sans-serif; font-size: 10px; fill: var(--text-muted); }
+  .node-detail-text { font-family: 'JetBrains Mono', monospace; font-size: 10px; fill: var(--text-secondary); }
+  .node-verdict-icon { font-size: 12px; font-weight: 700; }
+  .verdict-healthy { fill: var(--accent-green); }
+  .verdict-unhealthy { fill: var(--accent-red); }
+  .verdict-convergence { fill: var(--accent-orange); }
+
+  .edge-line { fill: none; stroke-width: 1.5; }
+  .edge-default { stroke: var(--border-medium); }
+  .edge-ecmp { stroke: var(--accent-blue); }
+  .edge-convergence { stroke: var(--accent-orange); stroke-dasharray: 6 4; }
+  .edge-loop { stroke: var(--accent-red); stroke-width: 2; }
+  .edge-no-fib { stroke: var(--accent-neon-purple); stroke-dasharray: 8 3; }
+  .edge-highlight { stroke-width: 3; filter: drop-shadow(0 0 4px currentColor); }
+  .edge-label { font-family: 'JetBrains Mono', monospace; font-size: 9px; fill: var(--text-muted); }
+
+  .zoom-controls { position: absolute; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 4px; }
+  .zoom-btn {
+    width: 36px; height: 36px; border-radius: 8px; border: 1px solid var(--border-medium);
+    background: var(--bg-card); color: var(--text-secondary); font-size: 18px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; transition: all 0.2s;
+  }
+  .zoom-btn:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--accent-blue); }
+
+  .legend {
+    position: absolute; bottom: 20px; left: 20px;
+    display: flex; gap: 16px; padding: 10px 16px;
+    background: rgba(15,20,25,0.9); border: 1px solid var(--border-subtle);
+    border-radius: 8px; font-size: 11px; color: var(--text-muted); backdrop-filter: blur(8px);
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-line { width: 24px; height: 2px; border-radius: 1px; }
+  .legend-dot { width: 10px; height: 10px; border-radius: 3px; border: 1.5px solid; }
+
+  /* Paste modal */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.6); z-index: 100;
+    align-items: center; justify-content: center; backdrop-filter: blur(4px);
+  }
+  .modal-overlay.active { display: flex; }
+  .modal-box {
+    background: var(--bg-surface); border: 1px solid var(--border-medium);
+    border-radius: 12px; padding: 24px; width: 600px; max-height: 80vh;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .modal-title { font-weight: 600; font-size: 15px; }
+  .modal-textarea {
+    flex: 1; min-height: 300px; background: var(--bg-card);
+    border: 1px solid var(--border-subtle); border-radius: 8px; padding: 12px;
+    font-family: 'JetBrains Mono', monospace; font-size: 12px;
+    color: var(--text-secondary); resize: vertical;
+  }
+  .modal-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border-medium); border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <div class="logo">fibtrace<span>.graph</span></div>
+    <div class="header-meta" id="headerMeta"></div>
+  </div>
+  <div class="header-actions">
+    <a href="/" class="btn">← Dashboard</a>
+    <button class="btn" id="btnLoad" onclick="document.getElementById('fileInput').click()">Load JSON</button>
+    <button class="btn" id="btnPaste" onclick="showPasteModal()">Paste JSON</button>
+    <button class="btn" id="btnExportJson" style="display:none" onclick="exportJSON()">Export JSON</button>
+    <button class="btn" id="btnExportSvg" style="display:none" onclick="exportSVG()">Export SVG</button>
+    <button class="btn" id="btnExportPng" style="display:none" onclick="exportPNG()">Export PNG</button>
+  </div>
+</div>
+
+<input type="file" id="fileInput" accept=".json" onchange="handleFile(event)">
+
+<!-- Drop zone -->
+<div class="drop-zone" id="dropZone">
+  <div class="drop-icon">⬡</div>
+  <div class="drop-text">Drop a fibtrace graph JSON here</div>
+  <div class="drop-sub">
+    or <a onclick="document.getElementById('fileInput').click()">browse</a>
+    · <a onclick="showPasteModal()">paste JSON</a>
+  </div>
+</div>
+
+<!-- Main layout -->
+<div class="main" id="mainView">
+  <div class="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-title">Overview</div>
+      <div class="stats" id="statsGrid"></div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-title">Forwarding Paths</div>
+      <div id="pathList"></div>
+    </div>
+    <div class="sidebar-section node-detail" id="nodeDetail">
+      <div class="sidebar-title">Device Detail</div>
+      <div id="nodeDetailContent"></div>
+    </div>
+  </div>
+  <div class="canvas-area">
+    <svg id="graphSvg" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div class="zoom-controls">
+      <button class="zoom-btn" onclick="zoomIn()">+</button>
+      <button class="zoom-btn" onclick="zoomOut()">−</button>
+      <button class="zoom-btn" onclick="zoomFit()" style="font-size:12px">⊡</button>
+    </div>
+    <div class="legend" id="legend" style="display:none">
+      <div class="legend-item"><div class="legend-dot" style="background:rgba(0,212,255,0.1);border-color:var(--accent-blue)"></div>ECMP Branch</div>
+      <div class="legend-item"><div class="legend-dot" style="background:rgba(255,170,51,0.1);border-color:var(--accent-orange)"></div>Convergence</div>
+      <div class="legend-item"><div class="legend-dot" style="background:rgba(0,232,143,0.1);border-color:var(--accent-green)"></div>Terminal</div>
+      <div class="legend-item"><div class="legend-line" style="background:var(--accent-blue)"></div>ECMP</div>
+      <div class="legend-item"><div class="legend-line" style="background:var(--accent-orange);background-image:repeating-linear-gradient(90deg,var(--accent-orange) 0,var(--accent-orange) 6px,transparent 6px,transparent 10px)"></div>Converge</div>
+      <div class="legend-item"><div class="legend-line" style="background:#cf5fff;background-image:repeating-linear-gradient(90deg,#cf5fff 0,#cf5fff 8px,transparent 8px,transparent 11px)"></div>No FIB</div>
+    </div>
+  </div>
+</div>
+
+<!-- Paste modal -->
+<div class="modal-overlay" id="pasteModal">
+  <div class="modal-box">
+    <div class="modal-title">Paste Graph JSON</div>
+    <textarea class="modal-textarea" id="pasteArea" placeholder='Paste fibtrace --json output or .graph.json content...'></textarea>
+    <div class="modal-actions">
+      <button class="btn" onclick="closePasteModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="loadFromPaste()">Load</button>
+    </div>
+  </div>
+</div>
+
+<script>
+let graphData = null, selectedNode = null, highlightedPath = null;
+let transform = { x: 0, y: 0, scale: 1 };
+let isPanning = false, panStart = { x: 0, y: 0 };
+const NODE_W = 200, NODE_H = 70, LEVEL_GAP = 100, NODE_GAP = 40;
+let nodePositions = {};
+
+// ── File Loading ──
+function handleFile(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => { try { loadGraph(JSON.parse(ev.target.result)); } catch(err) { alert('Invalid JSON: '+err.message); }};
+  reader.readAsText(file);
+}
+function showPasteModal() { document.getElementById('pasteModal').classList.add('active'); }
+function closePasteModal() { document.getElementById('pasteModal').classList.remove('active'); }
+function loadFromPaste() {
+  try { loadGraph(JSON.parse(document.getElementById('pasteArea').value)); closePasteModal(); }
+  catch(err) { alert('Invalid JSON: '+err.message); }
+}
+
+// Drag and drop
+const dz = document.getElementById('dropZone');
+document.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
+document.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+document.addEventListener('drop', e => {
+  e.preventDefault(); dz.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) {
+    const reader = new FileReader();
+    reader.onload = ev => { try { loadGraph(JSON.parse(ev.target.result)); } catch(err) { alert('Invalid JSON: '+err.message); }};
+    reader.readAsText(file);
+  }
+});
+
+function loadGraph(data) {
+  if (data.graph) graphData = data.graph;
+  else if (data.meta && data.nodes && data.edges) graphData = data;
+  else { alert('Unrecognized format.'); return; }
+  document.getElementById('dropZone').style.display = 'none';
+  document.getElementById('mainView').classList.add('active');
+  document.getElementById('btnExportJson').style.display = '';
+  document.getElementById('btnExportSvg').style.display = '';
+  document.getElementById('btnExportPng').style.display = '';
+  document.getElementById('legend').style.display = '';
+  const m = graphData.meta;
+  document.getElementById('headerMeta').textContent =
+    `${m.target_prefix} from ${m.source_host} — ${m.total_devices} devices · ${m.total_edges} edges`;
+  renderSidebar();
+  layoutAndRender();
+}
+
+// ── Sidebar ──
+function renderSidebar() {
+  const m = graphData.meta;
+  document.getElementById('statsGrid').innerHTML = `
+    <div class="stat"><div class="stat-value blue">${m.total_devices}</div><div class="stat-label">Devices</div></div>
+    <div class="stat"><div class="stat-value green">${m.total_edges}</div><div class="stat-label">Edges</div></div>
+    <div class="stat"><div class="stat-value orange">${m.ecmp_branch_points.length}</div><div class="stat-label">ECMP Branches</div></div>
+    <div class="stat"><div class="stat-value purple">${m.convergence_points.length}</div><div class="stat-label">Convergence Pts</div></div>
+  `;
+  const pathList = document.getElementById('pathList');
+  pathList.innerHTML = '';
+  (m.paths || []).forEach((path, i) => {
+    const el = document.createElement('div');
+    el.className = 'path-item';
+    el.onclick = () => highlightPathFn(i);
+    const hops = path.map(h => {
+      const node = graphData.nodes[h];
+      let cls = 'path-hop';
+      if (node && node.is_ecmp_branch) cls += ' ecmp';
+      if (node && node.is_convergence) cls += ' convergence';
+      return `<span class="${cls}">${h.split('.')[0]}</span>`;
+    });
+    el.innerHTML = `<div class="path-label">Path ${i}</div>${hops.join('<span class="path-arrow">→</span>')}`;
+    pathList.appendChild(el);
+  });
+}
+
+function showNodeDetail(hostname) {
+  const node = graphData.nodes[hostname];
+  if (!node) return;
+  selectedNode = hostname;
+  document.getElementById('nodeDetail').classList.add('active');
+  const badges = [];
+  if (node.is_ecmp_branch) badges.push('<span class="detail-badge badge-ecmp">ECMP</span>');
+  if (node.is_convergence) badges.push('<span class="detail-badge badge-convergence">Convergence</span>');
+  if (node.is_terminal) badges.push('<span class="detail-badge badge-terminal">Terminal</span>');
+  if (!node.reachable) badges.push('<span class="detail-badge badge-unreachable">Unreachable</span>');
+  const rows = [
+    ['Platform', node.platform],['SSH Target', node.ssh_target],
+    ['Verdict', node.verdict],['Depth', node.depth],
+    ['Route', node.route_summary||'—'],['FIB', node.fib_summary||'—'],
+    ['Egress', (node.egress_interfaces||[]).join(', ')||'—'],
+    ['Parents', (node.parents||[]).join(', ')||'(root)'],
+    ['Children', (node.children||[]).join(', ')||'(leaf)'],
+  ];
+  document.getElementById('nodeDetailContent').innerHTML = `
+    <div class="detail-header"><div class="detail-hostname">${hostname}</div>${badges.join('')}</div>
+    ${rows.map(([k,v])=>`<div class="detail-row"><span class="detail-key">${k}</span><span class="detail-val">${v}</span></div>`).join('')}
+  `;
+  renderGraph();
+}
+
+// ── Layout ──
+function layoutAndRender() {
+  const nodes = graphData.nodes;
+  const depthGroups = {};
+  for (const [h, n] of Object.entries(nodes)) { const d=n.depth; if(!depthGroups[d]) depthGroups[d]=[]; depthGroups[d].push(h); }
+  const depths = Object.keys(depthGroups).map(Number).sort((a,b)=>a-b);
+  for (let di=1;di<depths.length;di++) {
+    depthGroups[depths[di]].sort((a,b) => {
+      const pa=nodes[a].parents||[], pb=nodes[b].parents||[];
+      const prev=depthGroups[depths[di-1]]||[];
+      return (pa.length?prev.indexOf(pa[0]):0)-(pb.length?prev.indexOf(pb[0]):0);
+    });
+  }
+  nodePositions = {};
+  const maxG = Math.max(...Object.values(depthGroups).map(g=>g.length));
+  const totalW = maxG*(NODE_W+NODE_GAP)-NODE_GAP;
+  for (const d of depths) {
+    const g=depthGroups[d], gw=g.length*(NODE_W+NODE_GAP)-NODE_GAP, sx=(totalW-gw)/2;
+    const di = depths.indexOf(d);
+    g.forEach((h,i)=>{ nodePositions[h]={x:sx+i*(NODE_W+NODE_GAP),y:di*(NODE_H+LEVEL_GAP)}; });
+  }
+  const svg=document.getElementById('graphSvg'), rect=svg.getBoundingClientRect();
+  const gH=(depths.length-1)*(NODE_H+LEVEL_GAP)+NODE_H, gW=totalW+NODE_W;
+  transform.scale=Math.min((rect.width-80)/gW,(rect.height-80)/gH,1.2);
+  transform.x=(rect.width-gW*transform.scale)/2;
+  transform.y=(rect.height-gH*transform.scale)/2+20;
+  renderGraph(); setupPanZoom();
+}
+
+// ── Render ──
+function renderGraph() {
+  const svg=document.getElementById('graphSvg');
+  svg.innerHTML='';
+  const defs=document.createElementNS('http://www.w3.org/2000/svg','defs');
+  [{id:'arrow-default',c:'#2a3a4e'},{id:'arrow-ecmp',c:'#00d4ff'},{id:'arrow-convergence',c:'#ffaa33'},{id:'arrow-loop',c:'#ff4466'},{id:'arrow-no-fib',c:'#cf5fff'},{id:'arrow-highlight',c:'#00d4ff'}].forEach(m=>{
+    const mk=document.createElementNS('http://www.w3.org/2000/svg','marker');
+    mk.setAttribute('id',m.id);mk.setAttribute('viewBox','0 0 10 7');mk.setAttribute('refX','10');mk.setAttribute('refY','3.5');
+    mk.setAttribute('markerWidth','8');mk.setAttribute('markerHeight','6');mk.setAttribute('orient','auto');
+    const p=document.createElementNS('http://www.w3.org/2000/svg','polygon');
+    p.setAttribute('points','0 0, 10 3.5, 0 7');p.setAttribute('fill',m.c);mk.appendChild(p);defs.appendChild(mk);
+  });
+  svg.appendChild(defs);
+  const g=document.createElementNS('http://www.w3.org/2000/svg','g');
+  g.setAttribute('transform',`translate(${transform.x},${transform.y}) scale(${transform.scale})`);g.id='graphGroup';
+
+  const hlE=new Set();
+  if (highlightedPath!==null&&graphData.meta.paths[highlightedPath]) {
+    const p=graphData.meta.paths[highlightedPath];
+    for(let i=0;i<p.length-1;i++) hlE.add(`${p[i]}→${p[i+1]}`);
+  }
+
+  graphData.edges.forEach(edge=>{
+    const fr=nodePositions[edge.from],to=nodePositions[edge.to];
+    if(!fr||!to)return;
+    const x1=fr.x+NODE_W/2,y1=fr.y+NODE_H,x2=to.x+NODE_W/2,y2=to.y;
+    const isHL=hlE.has(`${edge.from}→${edge.to}`), dim=highlightedPath!==null&&!isHL;
+    const midY=(y1+y2)/2;
+    const path=document.createElementNS('http://www.w3.org/2000/svg','path');
+    path.setAttribute('d',`M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`);
+    let cls='edge-line ',me='url(#arrow-default)';
+    if(edge.is_loop){cls+='edge-loop';me='url(#arrow-loop)';}
+    else if(edge.is_convergence){cls+='edge-convergence';me='url(#arrow-convergence)';}
+    else if(edge.is_ecmp_sibling){cls+='edge-ecmp';me='url(#arrow-ecmp)';}
+    else {
+      const srcNode=graphData.nodes[edge.from];
+      if(srcNode&&!srcNode.fib_summary){cls+='edge-no-fib';me='url(#arrow-no-fib)';}
+      else cls+='edge-default';
+    }
+    if(isHL){cls+=' edge-highlight';me='url(#arrow-highlight)';}
+    path.setAttribute('class',cls);path.setAttribute('marker-end',me);
+    if(dim) path.setAttribute('opacity','0.15');
+    g.appendChild(path);
+    if(edge.egress_interface){
+      const lx=(x1+x2)/2+(x2>x1?8:-8),ly=midY-4;
+      const lb=document.createElementNS('http://www.w3.org/2000/svg','text');
+      lb.setAttribute('x',lx);lb.setAttribute('y',ly);lb.setAttribute('text-anchor','middle');
+      lb.setAttribute('class','edge-label');if(dim)lb.setAttribute('opacity','0.15');
+      lb.textContent=edge.egress_interface;g.appendChild(lb);
+    }
+  });
+
+  for(const [hostname,node] of Object.entries(graphData.nodes)){
+    const pos=nodePositions[hostname];if(!pos)continue;
+    const dim=highlightedPath!==null&&!graphData.meta.paths[highlightedPath]?.includes(hostname);
+    const ng=document.createElementNS('http://www.w3.org/2000/svg','g');
+    ng.setAttribute('class','node-group');ng.setAttribute('transform',`translate(${pos.x},${pos.y})`);
+    if(dim)ng.setAttribute('opacity','0.2');
+    ng.onclick=e=>{e.stopPropagation();showNodeDetail(hostname);};
+    const r=document.createElementNS('http://www.w3.org/2000/svg','rect');
+    r.setAttribute('width',NODE_W);r.setAttribute('height',NODE_H);r.setAttribute('rx','10');r.setAttribute('ry','10');
+    let bc='node-box ';
+    if(!node.reachable)bc+='node-box-unreachable';
+    else if(node.is_ecmp_branch)bc+='node-box-ecmp';
+    else if(node.is_convergence)bc+='node-box-convergence';
+    else if(node.is_terminal)bc+='node-box-terminal';
+    else bc+='node-box-default';
+    if(selectedNode===hostname)bc+=' node-box-selected';
+    r.setAttribute('class',bc);ng.appendChild(r);
+    const ic=document.createElementNS('http://www.w3.org/2000/svg','text');
+    ic.setAttribute('x','14');ic.setAttribute('y','28');
+    let icc='node-verdict-icon ';
+    if(node.verdict==='healthy'){ic.textContent='✓';icc+='verdict-healthy';}
+    else if(node.verdict==='convergence'){ic.textContent='↪';icc+='verdict-convergence';}
+    else{ic.textContent='✗';icc+='verdict-unhealthy';}
+    ic.setAttribute('class',icc);ng.appendChild(ic);
+    const nm=document.createElementNS('http://www.w3.org/2000/svg','text');
+    nm.setAttribute('x','32');nm.setAttribute('y','28');nm.setAttribute('class','node-hostname');
+    nm.textContent=hostname;ng.appendChild(nm);
+    const sb=document.createElementNS('http://www.w3.org/2000/svg','text');
+    sb.setAttribute('x','14');sb.setAttribute('y','46');sb.setAttribute('class','node-platform');
+    sb.textContent=(node.platform||'').replace('juniper_','').replace('arista_','');ng.appendChild(sb);
+    if(node.egress_interfaces&&node.egress_interfaces.length){
+      const eg=document.createElementNS('http://www.w3.org/2000/svg','text');
+      eg.setAttribute('x','14');eg.setAttribute('y','60');eg.setAttribute('class','node-detail-text');
+      eg.textContent=node.egress_interfaces.join(', ');ng.appendChild(eg);
+    }
+    g.appendChild(ng);
+  }
+  svg.appendChild(g);
+}
+
+// ── Pan/Zoom ──
+function setupPanZoom(){
+  const svg=document.getElementById('graphSvg');
+  svg.addEventListener('mousedown',e=>{if(e.button===0){isPanning=true;panStart={x:e.clientX-transform.x,y:e.clientY-transform.y};}});
+  svg.addEventListener('mousemove',e=>{if(isPanning){transform.x=e.clientX-panStart.x;transform.y=e.clientY-panStart.y;updateTransform();}});
+  svg.addEventListener('mouseup',()=>isPanning=false);
+  svg.addEventListener('mouseleave',()=>isPanning=false);
+  svg.addEventListener('wheel',e=>{
+    e.preventDefault();const d=e.deltaY>0?0.9:1.1;const r=svg.getBoundingClientRect();
+    const mx=e.clientX-r.left,my=e.clientY-r.top;
+    transform.x=mx-(mx-transform.x)*d;transform.y=my-(my-transform.y)*d;transform.scale*=d;updateTransform();
+  },{passive:false});
+  svg.addEventListener('click',()=>{selectedNode=null;highlightedPath=null;
+    document.getElementById('nodeDetail').classList.remove('active');
+    document.querySelectorAll('.path-item').forEach(p=>p.classList.remove('active'));renderGraph();});
+}
+function updateTransform(){const g=document.getElementById('graphGroup');if(g)g.setAttribute('transform',`translate(${transform.x},${transform.y}) scale(${transform.scale})`);}
+function zoomIn(){transform.scale*=1.2;updateTransform();}
+function zoomOut(){transform.scale*=0.8;updateTransform();}
+function zoomFit(){layoutAndRender();}
+function highlightPathFn(i){highlightedPath=highlightedPath===i?null:i;document.querySelectorAll('.path-item').forEach((p,j)=>p.classList.toggle('active',j===highlightedPath));renderGraph();}
+
+// ── Export ──
+function exportSVG(){
+  const svg=document.getElementById('graphSvg'),clone=svg.cloneNode(true);
+  const s=document.createElementNS('http://www.w3.org/2000/svg','style');
+  s.textContent=document.querySelector('style').textContent;clone.prepend(s);
+  clone.setAttribute('style','background:#0a0e14');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([clone.outerHTML],{type:'image/svg+xml'}));
+  a.download=`fibtrace_${graphData.meta.target_prefix.replace(/\//g,'_')}.svg`;a.click();
+}
+function exportPNG(){
+  const svg=document.getElementById('graphSvg'),rect=svg.getBoundingClientRect();
+  const c=document.createElement('canvas');c.width=rect.width*2;c.height=rect.height*2;
+  const ctx=c.getContext('2d');ctx.scale(2,2);ctx.fillStyle='#0a0e14';ctx.fillRect(0,0,rect.width,rect.height);
+  const img=new Image();
+  img.onload=()=>{ctx.drawImage(img,0,0,rect.width,rect.height);const a=document.createElement('a');
+    a.href=c.toDataURL('image/png');a.download=`fibtrace_${graphData.meta.target_prefix.replace(/\//g,'_')}.png`;a.click();};
+  img.src='data:image/svg+xml;base64,'+btoa(unescape(encodeURIComponent(new XMLSerializer().serializeToString(svg))));
+}
+function exportJSON(){
+  const blob=new Blob([JSON.stringify(graphData,null,2)],{type:'application/json'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download=`fibtrace_${graphData.meta.target_prefix.replace(/\//g,'_')}.graph.json`;
+  a.click(); URL.revokeObjectURL(a.href);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,1033 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>fibtrace — Forwarding Graph</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg-deep: #0a0e14;
+    --bg-surface: #0f1419;
+    --bg-card: #141a22;
+    --bg-hover: #1a2230;
+    --border-subtle: #1e2a3a;
+    --border-medium: #2a3a4e;
+    --text-primary: #e0e6ed;
+    --text-secondary: #8899aa;
+    --text-muted: #556677;
+    --accent-blue: #00d4ff;
+    --accent-green: #00e88f;
+    --accent-orange: #ffaa33;
+    --accent-red: #ff4466;
+    --accent-purple: #b48eff;
+    --accent-cyan: #00e5c7;
+    --accent-yellow: #ffe066;
+    --glow-blue: rgba(0, 212, 255, 0.15);
+    --glow-green: rgba(0, 232, 143, 0.15);
+    --glow-orange: rgba(255, 170, 51, 0.12);
+    --glow-red: rgba(255, 68, 102, 0.12);
+    --glow-purple: rgba(180, 142, 255, 0.12);
+  }
+
+  body {
+    background: var(--bg-deep);
+    color: var(--text-primary);
+    font-family: 'Outfit', sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ─── Header ─── */
+  .header {
+    padding: 20px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--bg-surface);
+  }
+  .header-left { display: flex; align-items: center; gap: 16px; }
+  .logo {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--accent-blue);
+    letter-spacing: -0.5px;
+  }
+  .logo span { color: var(--text-muted); font-weight: 400; }
+  .header-meta {
+    font-size: 13px;
+    color: var(--text-muted);
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .header-actions { display: flex; gap: 10px; }
+  .btn {
+    padding: 8px 16px;
+    border-radius: 6px;
+    border: 1px solid var(--border-medium);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    font-family: 'Outfit', sans-serif;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--accent-blue); }
+  .btn-primary {
+    background: rgba(0, 212, 255, 0.1);
+    border-color: var(--accent-blue);
+    color: var(--accent-blue);
+  }
+  .btn-primary:hover { background: rgba(0, 212, 255, 0.2); }
+
+  /* ─── Drop Zone ─── */
+  .drop-zone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: calc(100vh - 70px);
+    gap: 20px;
+    transition: all 0.3s;
+  }
+  .drop-zone.drag-over { background: rgba(0, 212, 255, 0.03); }
+  .drop-icon {
+    width: 80px; height: 80px;
+    border: 2px dashed var(--border-medium);
+    border-radius: 16px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 32px;
+    color: var(--text-muted);
+    transition: all 0.3s;
+  }
+  .drop-zone.drag-over .drop-icon { border-color: var(--accent-blue); color: var(--accent-blue); }
+  .drop-text { font-size: 16px; color: var(--text-secondary); }
+  .drop-sub { font-size: 13px; color: var(--text-muted); }
+  .drop-sub a { color: var(--accent-blue); cursor: pointer; text-decoration: none; }
+  .drop-sub a:hover { text-decoration: underline; }
+  #fileInput { display: none; }
+
+  /* ─── Main Layout ─── */
+  .main { display: none; height: calc(100vh - 70px); }
+  .main.active { display: flex; }
+
+  /* ─── Sidebar ─── */
+  .sidebar {
+    width: 320px;
+    min-width: 320px;
+    border-right: 1px solid var(--border-subtle);
+    background: var(--bg-surface);
+    overflow-y: auto;
+    padding: 0;
+  }
+  .sidebar-section {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .sidebar-title {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+  }
+
+  /* Stats grid */
+  .stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .stat {
+    padding: 10px 12px;
+    background: var(--bg-card);
+    border-radius: 8px;
+    border: 1px solid var(--border-subtle);
+  }
+  .stat-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 1;
+  }
+  .stat-label {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+  .stat-value.blue { color: var(--accent-blue); }
+  .stat-value.green { color: var(--accent-green); }
+  .stat-value.orange { color: var(--accent-orange); }
+  .stat-value.purple { color: var(--accent-purple); }
+
+  /* Path list */
+  .path-item {
+    padding: 10px 12px;
+    background: var(--bg-card);
+    border-radius: 8px;
+    border: 1px solid var(--border-subtle);
+    margin-bottom: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s;
+    line-height: 1.6;
+  }
+  .path-item:hover { border-color: var(--accent-blue); background: var(--bg-hover); }
+  .path-item.active { border-color: var(--accent-blue); background: rgba(0, 212, 255, 0.05); }
+  .path-label {
+    font-family: 'Outfit', sans-serif;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--accent-blue);
+    margin-bottom: 4px;
+  }
+  .path-hop { color: var(--text-muted); }
+  .path-hop.ecmp { color: var(--accent-blue); }
+  .path-hop.convergence { color: var(--accent-orange); }
+  .path-arrow { color: var(--text-muted); margin: 0 2px; }
+
+  /* Node detail */
+  .node-detail { display: none; }
+  .node-detail.active { display: block; }
+  .detail-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .detail-hostname {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .detail-badge {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .badge-ecmp { background: rgba(0, 212, 255, 0.15); color: var(--accent-blue); }
+  .badge-convergence { background: rgba(255, 170, 51, 0.15); color: var(--accent-orange); }
+  .badge-terminal { background: rgba(0, 232, 143, 0.15); color: var(--accent-green); }
+  .badge-unreachable { background: rgba(255, 68, 102, 0.15); color: var(--accent-red); }
+
+  .detail-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border-subtle);
+    font-size: 13px;
+  }
+  .detail-key { color: var(--text-muted); }
+  .detail-val {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-secondary);
+    text-align: right;
+    max-width: 180px;
+    word-break: break-all;
+  }
+
+  /* ─── Canvas area ─── */
+  .canvas-area {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    background:
+      radial-gradient(circle at 50% 50%, rgba(0, 212, 255, 0.02) 0%, transparent 60%),
+      var(--bg-deep);
+  }
+  .canvas-area svg {
+    width: 100%;
+    height: 100%;
+    cursor: grab;
+  }
+  .canvas-area svg:active { cursor: grabbing; }
+
+  /* ─── SVG Styles ─── */
+  .node-group { cursor: pointer; }
+  .node-group:hover .node-box { filter: brightness(1.15); }
+
+  .node-box {
+    rx: 10; ry: 10;
+    stroke-width: 1.5;
+    transition: filter 0.2s;
+  }
+  .node-box-default { fill: var(--bg-card); stroke: var(--border-medium); }
+  .node-box-ecmp { fill: rgba(0, 212, 255, 0.06); stroke: var(--accent-blue); }
+  .node-box-convergence { fill: rgba(255, 170, 51, 0.06); stroke: var(--accent-orange); }
+  .node-box-terminal { fill: rgba(0, 232, 143, 0.06); stroke: var(--accent-green); }
+  .node-box-unreachable { fill: rgba(255, 68, 102, 0.06); stroke: var(--accent-red); }
+  .node-box-selected { stroke-width: 2.5; filter: brightness(1.2); }
+
+  .node-hostname {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    font-weight: 600;
+    fill: var(--text-primary);
+  }
+  .node-platform {
+    font-family: 'Outfit', sans-serif;
+    font-size: 10px;
+    fill: var(--text-muted);
+  }
+  .node-detail-text {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    fill: var(--text-secondary);
+  }
+  .node-verdict-icon {
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .verdict-healthy { fill: var(--accent-green); }
+  .verdict-unhealthy { fill: var(--accent-red); }
+  .verdict-convergence { fill: var(--accent-orange); }
+
+  .edge-line {
+    fill: none;
+    stroke-width: 1.5;
+    transition: stroke 0.2s, stroke-width 0.2s;
+  }
+  .edge-default { stroke: var(--border-medium); }
+  .edge-ecmp { stroke: var(--accent-blue); stroke-dasharray: none; }
+  .edge-convergence { stroke: var(--accent-orange); stroke-dasharray: 6 4; }
+  .edge-loop { stroke: var(--accent-red); stroke-width: 2; }
+  .edge-highlight { stroke-width: 3; filter: drop-shadow(0 0 4px currentColor); }
+
+  .edge-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    fill: var(--text-muted);
+  }
+  .edge-arrow { stroke-width: 1.5; }
+
+  /* Grid dots */
+  .grid-dot { fill: var(--border-subtle); opacity: 0.3; }
+
+  /* ─── Zoom controls ─── */
+  .zoom-controls {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .zoom-btn {
+    width: 36px; height: 36px;
+    border-radius: 8px;
+    border: 1px solid var(--border-medium);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    font-size: 18px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+  }
+  .zoom-btn:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--accent-blue); }
+
+  /* Legend */
+  .legend {
+    position: absolute;
+    bottom: 20px;
+    left: 20px;
+    display: flex;
+    gap: 16px;
+    padding: 10px 16px;
+    background: rgba(15, 20, 25, 0.9);
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    font-size: 11px;
+    color: var(--text-muted);
+    backdrop-filter: blur(8px);
+  }
+  .legend-item { display: flex; align-items: center; gap: 6px; }
+  .legend-line {
+    width: 24px;
+    height: 2px;
+    border-radius: 1px;
+  }
+  .legend-dot {
+    width: 10px; height: 10px;
+    border-radius: 3px;
+    border: 1.5px solid;
+  }
+
+  /* ─── Scrollbar ─── */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border-medium); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <div class="logo">fibtrace<span>.graph</span></div>
+    <div class="header-meta" id="headerMeta"></div>
+  </div>
+  <div class="header-actions">
+    <button class="btn" id="btnLoad" onclick="document.getElementById('fileInput').click()">Load JSON</button>
+    <button class="btn" id="btnPaste" onclick="showPasteModal()">Paste JSON</button>
+    <button class="btn" id="btnExportSvg" style="display:none" onclick="exportSVG()">Export SVG</button>
+    <button class="btn" id="btnExportPng" style="display:none" onclick="exportPNG()">Export PNG</button>
+  </div>
+</div>
+
+<input type="file" id="fileInput" accept=".json" onchange="handleFile(event)">
+
+<!-- Drop zone (initial state) -->
+<div class="drop-zone" id="dropZone">
+  <div class="drop-icon">⬡</div>
+  <div class="drop-text">Drop a fibtrace graph JSON here</div>
+  <div class="drop-sub">or <a onclick="document.getElementById('fileInput').click()">browse</a> · <a onclick="showPasteModal()">paste JSON</a> · <a onclick="loadDemo()">load demo</a></div>
+</div>
+
+<!-- Main layout (after load) -->
+<div class="main" id="mainView">
+  <div class="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-title">Overview</div>
+      <div class="stats" id="statsGrid"></div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-title">Forwarding Paths</div>
+      <div id="pathList"></div>
+    </div>
+    <div class="sidebar-section node-detail" id="nodeDetail">
+      <div class="sidebar-title">Device Detail</div>
+      <div id="nodeDetailContent"></div>
+    </div>
+  </div>
+  <div class="canvas-area" id="canvasArea">
+    <svg id="graphSvg" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div class="zoom-controls">
+      <button class="zoom-btn" onclick="zoomIn()">+</button>
+      <button class="zoom-btn" onclick="zoomOut()">−</button>
+      <button class="zoom-btn" onclick="zoomFit()" style="font-size:12px">⊡</button>
+    </div>
+    <div class="legend" id="legend" style="display:none">
+      <div class="legend-item">
+        <div class="legend-dot" style="background:rgba(0,212,255,0.1);border-color:var(--accent-blue)"></div>
+        ECMP Branch
+      </div>
+      <div class="legend-item">
+        <div class="legend-dot" style="background:rgba(255,170,51,0.1);border-color:var(--accent-orange)"></div>
+        Convergence
+      </div>
+      <div class="legend-item">
+        <div class="legend-dot" style="background:rgba(0,232,143,0.1);border-color:var(--accent-green)"></div>
+        Terminal
+      </div>
+      <div class="legend-item">
+        <div class="legend-line" style="background:var(--accent-blue)"></div>
+        ECMP
+      </div>
+      <div class="legend-item">
+        <div class="legend-line" style="background:var(--accent-orange);background-image:repeating-linear-gradient(90deg,var(--accent-orange) 0,var(--accent-orange) 6px,transparent 6px,transparent 10px)"></div>
+        Converge
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Paste modal -->
+<div id="pasteModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;display:none;align-items:center;justify-content:center;backdrop-filter:blur(4px)">
+  <div style="background:var(--bg-surface);border:1px solid var(--border-medium);border-radius:12px;padding:24px;width:600px;max-height:80vh;display:flex;flex-direction:column;gap:12px">
+    <div style="font-weight:600;font-size:15px">Paste Graph JSON</div>
+    <textarea id="pasteArea" style="flex:1;min-height:300px;background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:8px;padding:12px;font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--text-secondary);resize:vertical" placeholder='Paste fibtrace --json output or .graph.json content...'></textarea>
+    <div style="display:flex;justify-content:flex-end;gap:8px">
+      <button class="btn" onclick="closePasteModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="loadFromPaste()">Load</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════
+// State
+// ════════════════════════════════════════
+let graphData = null;
+let selectedNode = null;
+let highlightedPath = null;
+let transform = { x: 0, y: 0, scale: 1 };
+let isPanning = false;
+let panStart = { x: 0, y: 0 };
+
+// Layout constants
+const NODE_W = 200;
+const NODE_H = 70;
+const LEVEL_GAP = 100;
+const NODE_GAP = 40;
+
+// ════════════════════════════════════════
+// File Loading
+// ════════════════════════════════════════
+function handleFile(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      loadGraph(data);
+    } catch (err) {
+      alert('Invalid JSON: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+}
+
+function showPasteModal() {
+  const modal = document.getElementById('pasteModal');
+  modal.style.display = 'flex';
+}
+function closePasteModal() {
+  document.getElementById('pasteModal').style.display = 'none';
+}
+function loadFromPaste() {
+  try {
+    const data = JSON.parse(document.getElementById('pasteArea').value);
+    loadGraph(data);
+    closePasteModal();
+  } catch (err) {
+    alert('Invalid JSON: ' + err.message);
+  }
+}
+
+// Drag and drop
+const dz = document.getElementById('dropZone');
+document.addEventListener('dragover', (e) => { e.preventDefault(); dz.classList.add('drag-over'); });
+document.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+document.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dz.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) {
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try { loadGraph(JSON.parse(ev.target.result)); }
+      catch (err) { alert('Invalid JSON: ' + err.message); }
+    };
+    reader.readAsText(file);
+  }
+});
+
+// ════════════════════════════════════════
+// Graph Loading
+// ════════════════════════════════════════
+function loadGraph(data) {
+  // Accept both raw graph and full fibtrace --json output
+  if (data.graph) {
+    graphData = data.graph;
+  } else if (data.meta && data.nodes && data.edges) {
+    graphData = data;
+  } else {
+    alert('Unrecognized format. Expected fibtrace graph JSON.');
+    return;
+  }
+
+  document.getElementById('dropZone').style.display = 'none';
+  document.getElementById('mainView').classList.add('active');
+  document.getElementById('btnExportSvg').style.display = '';
+  document.getElementById('btnExportPng').style.display = '';
+  document.getElementById('legend').style.display = '';
+
+  // Header
+  const m = graphData.meta;
+  document.getElementById('headerMeta').textContent =
+    `${m.target_prefix} from ${m.source_host} — ${m.total_devices} devices · ${m.total_edges} edges`;
+
+  renderSidebar();
+  layoutAndRender();
+}
+
+// ════════════════════════════════════════
+// Sidebar
+// ════════════════════════════════════════
+function renderSidebar() {
+  const m = graphData.meta;
+
+  // Stats
+  document.getElementById('statsGrid').innerHTML = `
+    <div class="stat"><div class="stat-value blue">${m.total_devices}</div><div class="stat-label">Devices</div></div>
+    <div class="stat"><div class="stat-value green">${m.total_edges}</div><div class="stat-label">Edges</div></div>
+    <div class="stat"><div class="stat-value orange">${m.ecmp_branch_points.length}</div><div class="stat-label">ECMP Branches</div></div>
+    <div class="stat"><div class="stat-value purple">${m.convergence_points.length}</div><div class="stat-label">Convergence Pts</div></div>
+  `;
+
+  // Paths
+  const pathList = document.getElementById('pathList');
+  pathList.innerHTML = '';
+  (m.paths || []).forEach((path, i) => {
+    const el = document.createElement('div');
+    el.className = 'path-item';
+    el.onclick = () => highlightPath(i);
+
+    const hops = path.map(h => {
+      const node = graphData.nodes[h];
+      let cls = 'path-hop';
+      if (node && node.is_ecmp_branch) cls += ' ecmp';
+      if (node && node.is_convergence) cls += ' convergence';
+      return `<span class="${cls}">${h.split('.')[0]}</span>`;
+    });
+
+    el.innerHTML = `
+      <div class="path-label">Path ${i}</div>
+      ${hops.join('<span class="path-arrow">→</span>')}
+    `;
+    pathList.appendChild(el);
+  });
+}
+
+function showNodeDetail(hostname) {
+  const node = graphData.nodes[hostname];
+  if (!node) return;
+
+  selectedNode = hostname;
+  const panel = document.getElementById('nodeDetail');
+  panel.classList.add('active');
+
+  const badges = [];
+  if (node.is_ecmp_branch) badges.push('<span class="detail-badge badge-ecmp">ECMP</span>');
+  if (node.is_convergence) badges.push('<span class="detail-badge badge-convergence">Convergence</span>');
+  if (node.is_terminal) badges.push('<span class="detail-badge badge-terminal">Terminal</span>');
+  if (!node.reachable) badges.push('<span class="detail-badge badge-unreachable">Unreachable</span>');
+
+  const rows = [
+    ['Platform', node.platform],
+    ['SSH Target', node.ssh_target],
+    ['Verdict', node.verdict],
+    ['Depth', node.depth],
+    ['Route', node.route_summary || '—'],
+    ['FIB', node.fib_summary || '—'],
+    ['Egress', (node.egress_interfaces || []).join(', ') || '—'],
+    ['Parents', (node.parents || []).join(', ') || '(root)'],
+    ['Children', (node.children || []).join(', ') || '(leaf)'],
+  ];
+
+  document.getElementById('nodeDetailContent').innerHTML = `
+    <div class="detail-header">
+      <div class="detail-hostname">${hostname}</div>
+      ${badges.join('')}
+    </div>
+    ${rows.map(([k, v]) => `<div class="detail-row"><span class="detail-key">${k}</span><span class="detail-val">${v}</span></div>`).join('')}
+  `;
+
+  // Re-render to update selection
+  renderGraph();
+}
+
+// ════════════════════════════════════════
+// Layout (DAG — Sugiyama-ish)
+// ════════════════════════════════════════
+let nodePositions = {};
+
+function layoutAndRender() {
+  const nodes = graphData.nodes;
+  const edges = graphData.edges;
+  const root = graphData.meta.root_hostname;
+
+  // 1. Group by depth
+  const depthGroups = {};
+  for (const [hostname, node] of Object.entries(nodes)) {
+    const d = node.depth;
+    if (!depthGroups[d]) depthGroups[d] = [];
+    depthGroups[d].push(hostname);
+  }
+
+  // 2. Sort within each depth to minimize crossings
+  // Simple heuristic: order children by parent order
+  const depths = Object.keys(depthGroups).map(Number).sort((a, b) => a - b);
+
+  for (let di = 1; di < depths.length; di++) {
+    const group = depthGroups[depths[di]];
+    group.sort((a, b) => {
+      const pa = nodes[a].parents || [];
+      const pb = nodes[b].parents || [];
+      const prevGroup = depthGroups[depths[di - 1]] || [];
+      const posA = pa.length ? prevGroup.indexOf(pa[0]) : 0;
+      const posB = pb.length ? prevGroup.indexOf(pb[0]) : 0;
+      return posA - posB;
+    });
+  }
+
+  // 3. Position nodes
+  nodePositions = {};
+  const maxGroupSize = Math.max(...Object.values(depthGroups).map(g => g.length));
+  const totalWidth = maxGroupSize * (NODE_W + NODE_GAP) - NODE_GAP;
+
+  for (const d of depths) {
+    const group = depthGroups[d];
+    const groupWidth = group.length * (NODE_W + NODE_GAP) - NODE_GAP;
+    const startX = (totalWidth - groupWidth) / 2;
+
+    group.forEach((hostname, i) => {
+      nodePositions[hostname] = {
+        x: startX + i * (NODE_W + NODE_GAP),
+        y: d * (NODE_H + LEVEL_GAP),
+      };
+    });
+  }
+
+  // Initial transform to center
+  const svg = document.getElementById('graphSvg');
+  const rect = svg.getBoundingClientRect();
+  const graphH = (depths.length) * (NODE_H + LEVEL_GAP);
+  const graphW = totalWidth + NODE_W;
+  const scaleX = (rect.width - 80) / graphW;
+  const scaleY = (rect.height - 80) / graphH;
+  transform.scale = Math.min(scaleX, scaleY, 1.2);
+  transform.x = (rect.width - graphW * transform.scale) / 2;
+  transform.y = (rect.height - graphH * transform.scale) / 2 + 20;
+
+  renderGraph();
+  setupPanZoom();
+}
+
+// ════════════════════════════════════════
+// Rendering
+// ════════════════════════════════════════
+function renderGraph() {
+  const svg = document.getElementById('graphSvg');
+  svg.innerHTML = '';
+
+  // Defs for arrowheads
+  const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+
+  const markers = [
+    { id: 'arrow-default', color: '#2a3a4e' },
+    { id: 'arrow-ecmp', color: '#00d4ff' },
+    { id: 'arrow-convergence', color: '#ffaa33' },
+    { id: 'arrow-loop', color: '#ff4466' },
+    { id: 'arrow-highlight', color: '#00d4ff' },
+  ];
+
+  markers.forEach(m => {
+    const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+    marker.setAttribute('id', m.id);
+    marker.setAttribute('viewBox', '0 0 10 7');
+    marker.setAttribute('refX', '10');
+    marker.setAttribute('refY', '3.5');
+    marker.setAttribute('markerWidth', '8');
+    marker.setAttribute('markerHeight', '6');
+    marker.setAttribute('orient', 'auto');
+    const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+    poly.setAttribute('points', '0 0, 10 3.5, 0 7');
+    poly.setAttribute('fill', m.color);
+    marker.appendChild(poly);
+    defs.appendChild(marker);
+  });
+
+  // Glow filter
+  const filter = document.createElementNS('http://www.w3.org/2000/svg', 'filter');
+  filter.setAttribute('id', 'glow');
+  const blur = document.createElementNS('http://www.w3.org/2000/svg', 'feGaussianBlur');
+  blur.setAttribute('stdDeviation', '3');
+  blur.setAttribute('result', 'coloredBlur');
+  filter.appendChild(blur);
+  const merge = document.createElementNS('http://www.w3.org/2000/svg', 'feMerge');
+  const mn1 = document.createElementNS('http://www.w3.org/2000/svg', 'feMergeNode');
+  mn1.setAttribute('in', 'coloredBlur');
+  merge.appendChild(mn1);
+  const mn2 = document.createElementNS('http://www.w3.org/2000/svg', 'feMergeNode');
+  mn2.setAttribute('in', 'SourceGraphic');
+  merge.appendChild(mn2);
+  filter.appendChild(merge);
+  defs.appendChild(filter);
+
+  svg.appendChild(defs);
+
+  // Transform group
+  const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+  g.setAttribute('transform', `translate(${transform.x},${transform.y}) scale(${transform.scale})`);
+  g.id = 'graphGroup';
+
+  // Highlighted path edges
+  const hlEdges = new Set();
+  if (highlightedPath !== null && graphData.meta.paths[highlightedPath]) {
+    const path = graphData.meta.paths[highlightedPath];
+    for (let i = 0; i < path.length - 1; i++) {
+      hlEdges.add(`${path[i]}→${path[i + 1]}`);
+    }
+  }
+
+  // Draw edges
+  graphData.edges.forEach(edge => {
+    const from = nodePositions[edge.from];
+    const to = nodePositions[edge.to];
+    if (!from || !to) return;
+
+    const x1 = from.x + NODE_W / 2;
+    const y1 = from.y + NODE_H;
+    const x2 = to.x + NODE_W / 2;
+    const y2 = to.y;
+
+    const isHL = hlEdges.has(`${edge.from}→${edge.to}`);
+    const dimmed = highlightedPath !== null && !isHL;
+
+    // Curved path
+    const midY = (y1 + y2) / 2;
+    const d = `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`;
+
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', d);
+
+    let cls = 'edge-line ';
+    let markerEnd = 'url(#arrow-default)';
+
+    if (edge.is_loop) {
+      cls += 'edge-loop';
+      markerEnd = 'url(#arrow-loop)';
+    } else if (edge.is_convergence) {
+      cls += 'edge-convergence';
+      markerEnd = 'url(#arrow-convergence)';
+    } else if (edge.is_ecmp_sibling) {
+      cls += 'edge-ecmp';
+      markerEnd = 'url(#arrow-ecmp)';
+    } else {
+      cls += 'edge-default';
+    }
+
+    if (isHL) {
+      cls += ' edge-highlight';
+      markerEnd = 'url(#arrow-highlight)';
+    }
+
+    path.setAttribute('class', cls);
+    path.setAttribute('marker-end', markerEnd);
+    if (dimmed) path.setAttribute('opacity', '0.15');
+
+    g.appendChild(path);
+
+    // Edge label
+    if (edge.egress_interface) {
+      const lx = (x1 + x2) / 2 + (x2 > x1 ? 8 : -8);
+      const ly = midY - 4;
+      const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      label.setAttribute('x', lx);
+      label.setAttribute('y', ly);
+      label.setAttribute('text-anchor', 'middle');
+      label.setAttribute('class', 'edge-label');
+      if (dimmed) label.setAttribute('opacity', '0.15');
+      label.textContent = edge.egress_interface;
+      g.appendChild(label);
+    }
+  });
+
+  // Draw nodes
+  for (const [hostname, node] of Object.entries(graphData.nodes)) {
+    const pos = nodePositions[hostname];
+    if (!pos) continue;
+
+    const dimmed = highlightedPath !== null &&
+      !graphData.meta.paths[highlightedPath]?.includes(hostname);
+
+    const ng = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    ng.setAttribute('class', 'node-group');
+    ng.setAttribute('transform', `translate(${pos.x},${pos.y})`);
+    if (dimmed) ng.setAttribute('opacity', '0.2');
+    ng.onclick = (e) => { e.stopPropagation(); showNodeDetail(hostname); };
+
+    // Box
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('width', NODE_W);
+    rect.setAttribute('height', NODE_H);
+    rect.setAttribute('rx', '10');
+    rect.setAttribute('ry', '10');
+
+    let boxClass = 'node-box ';
+    if (!node.reachable) boxClass += 'node-box-unreachable';
+    else if (node.is_ecmp_branch) boxClass += 'node-box-ecmp';
+    else if (node.is_convergence) boxClass += 'node-box-convergence';
+    else if (node.is_terminal) boxClass += 'node-box-terminal';
+    else boxClass += 'node-box-default';
+
+    if (selectedNode === hostname) boxClass += ' node-box-selected';
+    rect.setAttribute('class', boxClass);
+    ng.appendChild(rect);
+
+    // Verdict icon
+    const icon = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    icon.setAttribute('x', '14');
+    icon.setAttribute('y', '28');
+    let iconClass = 'node-verdict-icon ';
+    if (node.verdict === 'healthy') { icon.textContent = '✓'; iconClass += 'verdict-healthy'; }
+    else if (node.verdict === 'convergence') { icon.textContent = '↪'; iconClass += 'verdict-convergence'; }
+    else { icon.textContent = '✗'; iconClass += 'verdict-unhealthy'; }
+    icon.setAttribute('class', iconClass);
+    ng.appendChild(icon);
+
+    // Hostname
+    const name = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    name.setAttribute('x', '32');
+    name.setAttribute('y', '28');
+    name.setAttribute('class', 'node-hostname');
+    name.textContent = hostname;
+    ng.appendChild(name);
+
+    // Platform + egress
+    const sub = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    sub.setAttribute('x', '14');
+    sub.setAttribute('y', '46');
+    sub.setAttribute('class', 'node-platform');
+    const platLabel = (node.platform || '').replace('juniper_', '').replace('arista_', '');
+    sub.textContent = platLabel;
+    ng.appendChild(sub);
+
+    // Egress interfaces
+    if (node.egress_interfaces && node.egress_interfaces.length) {
+      const eg = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      eg.setAttribute('x', '14');
+      eg.setAttribute('y', '60');
+      eg.setAttribute('class', 'node-detail-text');
+      eg.textContent = node.egress_interfaces.join(', ');
+      ng.appendChild(eg);
+    }
+
+    g.appendChild(ng);
+  }
+
+  svg.appendChild(g);
+}
+
+// ════════════════════════════════════════
+// Pan & Zoom
+// ════════════════════════════════════════
+function setupPanZoom() {
+  const svg = document.getElementById('graphSvg');
+
+  svg.addEventListener('mousedown', (e) => {
+    if (e.button === 0) {
+      isPanning = true;
+      panStart = { x: e.clientX - transform.x, y: e.clientY - transform.y };
+    }
+  });
+
+  svg.addEventListener('mousemove', (e) => {
+    if (isPanning) {
+      transform.x = e.clientX - panStart.x;
+      transform.y = e.clientY - panStart.y;
+      updateTransform();
+    }
+  });
+
+  svg.addEventListener('mouseup', () => { isPanning = false; });
+  svg.addEventListener('mouseleave', () => { isPanning = false; });
+
+  svg.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+    const rect = svg.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    transform.x = mx - (mx - transform.x) * delta;
+    transform.y = my - (my - transform.y) * delta;
+    transform.scale *= delta;
+    updateTransform();
+  }, { passive: false });
+
+  // Click background to deselect
+  svg.addEventListener('click', () => {
+    selectedNode = null;
+    highlightedPath = null;
+    document.getElementById('nodeDetail').classList.remove('active');
+    document.querySelectorAll('.path-item').forEach(p => p.classList.remove('active'));
+    renderGraph();
+  });
+}
+
+function updateTransform() {
+  const g = document.getElementById('graphGroup');
+  if (g) g.setAttribute('transform', `translate(${transform.x},${transform.y}) scale(${transform.scale})`);
+}
+
+function zoomIn() { transform.scale *= 1.2; updateTransform(); }
+function zoomOut() { transform.scale *= 0.8; updateTransform(); }
+function zoomFit() { layoutAndRender(); }
+
+// ════════════════════════════════════════
+// Path Highlighting
+// ════════════════════════════════════════
+function highlightPath(idx) {
+  if (highlightedPath === idx) {
+    highlightedPath = null;
+  } else {
+    highlightedPath = idx;
+  }
+  document.querySelectorAll('.path-item').forEach((p, i) => {
+    p.classList.toggle('active', i === highlightedPath);
+  });
+  renderGraph();
+}
+
+// ════════════════════════════════════════
+// Export
+// ════════════════════════════════════════
+function exportSVG() {
+  const svg = document.getElementById('graphSvg');
+  const clone = svg.cloneNode(true);
+
+  // Inline styles for standalone SVG
+  const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+  style.textContent = document.querySelector('style').textContent;
+  clone.prepend(style);
+  clone.setAttribute('style', `background:${getComputedStyle(document.body).getPropertyValue('--bg-deep')}`);
+
+  const blob = new Blob([clone.outerHTML], { type: 'image/svg+xml' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `fibtrace_${graphData.meta.target_prefix.replace(/\//g, '_')}.svg`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function exportPNG() {
+  const svg = document.getElementById('graphSvg');
+  const rect = svg.getBoundingClientRect();
+  const canvas = document.createElement('canvas');
+  const scale = 2;
+  canvas.width = rect.width * scale;
+  canvas.height = rect.height * scale;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+  ctx.fillStyle = '#0a0e14';
+  ctx.fillRect(0, 0, rect.width, rect.height);
+
+  const svgData = new XMLSerializer().serializeToString(svg);
+  const img = new Image();
+  img.onload = () => {
+    ctx.drawImage(img, 0, 0, rect.width, rect.height);
+    const a = document.createElement('a');
+    a.href = canvas.toDataURL('image/png');
+    a.download = `fibtrace_${graphData.meta.target_prefix.replace(/\//g, '_')}.png`;
+    a.click();
+  };
+  img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
+}
+
+// ════════════════════════════════════════
+// Demo data
+// ════════════════════════════════════════
+function loadDemo() {
+  const demo = {"meta":{"target_prefix":"172.17.1.136/32","source_host":"172.17.1.135","root_hostname":"edge01.iad1","total_devices":6,"total_edges":6,"ecmp_branch_points":["agg2.iad1"],"convergence_points":["edge5-01.iad1"],"paths":[["edge01.iad1","agg2.iad1","edge1-01.iad1","edge5-01.iad1","agg5-01.iad1"],["edge01.iad1","agg2.iad1","edge1-02.iad1","edge5-01.iad1","agg5-01.iad1"]],"started_at":"2026-03-18T02:10:13.103008","completed_at":"2026-03-18T02:11:53.016596"},"nodes":{"edge01.iad1":{"hostname":"edge01.iad1","ssh_target":"172.17.1.135","platform":"juniper_junos","depth":0,"verdict":"healthy","is_terminal":false,"is_connected":false,"reachable":true,"route_summary":"dynamic, 2 ECMP paths","fib_summary":"programmed, 1 path(s)","egress_interfaces":["ge-0/0/1.0"],"is_ecmp_branch":false,"is_convergence":false,"is_loop_member":false,"children":["agg2.iad1"],"parents":[]},"agg2.iad1":{"hostname":"agg2.iad1","ssh_target":"172.17.1.25","platform":"arista_eos","depth":1,"verdict":"healthy","is_terminal":false,"is_connected":false,"reachable":true,"route_summary":"dynamic, 2 ECMP paths","fib_summary":"programmed, 2 path(s)","egress_interfaces":["Ethernet4","Ethernet5"],"is_ecmp_branch":true,"is_convergence":false,"is_loop_member":false,"children":["edge1-01.iad1","edge1-02.iad1"],"parents":["edge01.iad1"]},"edge1-01.iad1":{"hostname":"edge1-01.iad1","ssh_target":"172.17.1.12","platform":"juniper_junos","depth":2,"verdict":"healthy","is_terminal":false,"is_connected":false,"reachable":true,"route_summary":"dynamic, 2 ECMP paths","fib_summary":"programmed, 1 path(s)","egress_interfaces":["ge-0/0/2.0"],"is_ecmp_branch":false,"is_convergence":false,"is_loop_member":false,"children":["edge5-01.iad1"],"parents":["agg2.iad1"]},"edge1-02.iad1":{"hostname":"edge1-02.iad1","ssh_target":"172.17.1.16","platform":"juniper_junos","depth":2,"verdict":"healthy","is_terminal":false,"is_connected":false,"reachable":true,"route_summary":"dynamic via 172.17.1.32 on ge-0/0/3.0","fib_summary":"programmed, 1 path(s)","egress_interfaces":["ge-0/0/3.0"],"is_ecmp_branch":false,"is_convergence":false,"is_loop_member":false,"children":["edge5-01.iad1"],"parents":["agg2.iad1"]},"edge5-01.iad1":{"hostname":"edge5-01.iad1","ssh_target":"172.17.1.26","platform":"juniper_junos","depth":3,"verdict":"healthy","is_terminal":false,"is_connected":false,"reachable":true,"route_summary":"dynamic via 172.17.1.29 on ge-0/0/1.0","fib_summary":"programmed, 1 path(s)","egress_interfaces":["ge-0/0/1.0"],"is_ecmp_branch":false,"is_convergence":true,"is_loop_member":false,"children":["agg5-01.iad1"],"parents":["edge1-01.iad1","edge1-02.iad1"]},"agg5-01.iad1":{"hostname":"agg5-01.iad1","ssh_target":"172.17.1.29","platform":"arista_eos","depth":4,"verdict":"healthy","is_terminal":true,"is_connected":true,"reachable":true,"route_summary":"connected via connected on Loopback0","fib_summary":null,"egress_interfaces":[],"is_ecmp_branch":false,"is_convergence":false,"is_loop_member":false,"children":[],"parents":["edge5-01.iad1"]}},"edges":[{"from":"edge01.iad1","to":"agg2.iad1","egress_interface":"ge-0/0/1.0","next_hop_ip":"172.17.1.25","address_family":"ipv4","is_ecmp_sibling":false,"is_convergence":false,"is_loop":false,"depth":1,"order":0},{"from":"agg2.iad1","to":"edge1-01.iad1","egress_interface":"Ethernet4","next_hop_ip":"172.17.1.12","address_family":"ipv4","is_ecmp_sibling":true,"is_convergence":false,"is_loop":false,"depth":2,"order":1},{"from":"agg2.iad1","to":"edge1-02.iad1","egress_interface":"Ethernet5","next_hop_ip":"172.17.1.16","address_family":"ipv4","is_ecmp_sibling":true,"is_convergence":false,"is_loop":false,"depth":2,"order":2},{"from":"edge1-01.iad1","to":"edge5-01.iad1","egress_interface":"ge-0/0/2.0","next_hop_ip":"172.17.1.26","address_family":"ipv4","is_ecmp_sibling":false,"is_convergence":false,"is_loop":false,"depth":3,"order":3},{"from":"edge1-02.iad1","to":"edge5-01.iad1","egress_interface":"ge-0/0/3.0","next_hop_ip":"172.17.1.32","address_family":"ipv4","is_ecmp_sibling":false,"is_convergence":true,"is_loop":false,"depth":3,"order":4},{"from":"edge5-01.iad1","to":"agg5-01.iad1","egress_interface":"ge-0/0/1.0","next_hop_ip":"172.17.1.29","address_family":"ipv4","is_ecmp_sibling":false,"is_convergence":false,"is_loop":false,"depth":4,"order":5}]};
+  loadGraph(demo);
+}
+</script>
+</body>
+</html>

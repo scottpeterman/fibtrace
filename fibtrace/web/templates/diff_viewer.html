@@ -1,0 +1,1584 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>fibtrace — Forwarding Graph Diff</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg-deep: #0a0e14;
+    --bg-surface: #0f1419;
+    --bg-card: #141a22;
+    --bg-hover: #1a2230;
+    --border-subtle: #1e2a3a;
+    --border-medium: #2a3a4e;
+    --text-primary: #e0e6ed;
+    --text-secondary: #8899aa;
+    --text-muted: #556677;
+    --accent-blue: #00d4ff;
+    --accent-green: #00e88f;
+    --accent-orange: #ffaa33;
+    --accent-red: #ff4466;
+    --accent-purple: #b48eff;
+    --accent-neon-purple: #cf5fff;
+    --accent-cyan: #00e5c7;
+
+    /* diff colors */
+    --diff-removed: #ff4466;
+    --diff-added:   #00e88f;
+    --diff-modified:#ffaa33;
+  }
+
+  body {
+    background: var(--bg-deep);
+    color: var(--text-primary);
+    font-family: 'Outfit', sans-serif;
+    min-height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ── Header ─────────────────────────────────────────── */
+  .header {
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--bg-surface);
+    height: 56px;
+  }
+  .header-left { display: flex; align-items: center; gap: 16px; }
+  .logo {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--accent-blue);
+  }
+  .logo span { color: var(--text-muted); font-weight: 400; }
+  .header-meta {
+    font-size: 13px;
+    color: var(--text-muted);
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .header-actions { display: flex; gap: 10px; }
+  .btn {
+    padding: 6px 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-medium);
+    color: var(--text-primary);
+    font-family: 'Outfit', sans-serif;
+    font-size: 13px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn:hover { background: var(--bg-hover); border-color: var(--accent-blue); }
+  .btn-primary {
+    background: var(--accent-blue); color: var(--bg-deep); border: none; font-weight: 600;
+  }
+  .btn-primary:hover { background: var(--accent-cyan); }
+
+  /* ── Landing / Upload ───────────────────────────────── */
+  .landing {
+    display: flex; align-items: center; justify-content: center;
+    min-height: calc(100vh - 56px);
+    padding: 40px;
+  }
+  .landing-card {
+    width: 100%; max-width: 900px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    padding: 32px;
+  }
+  .landing-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 22px; font-weight: 600;
+    color: var(--accent-blue);
+    margin-bottom: 4px;
+  }
+  .landing-sub {
+    color: var(--text-secondary);
+    margin-bottom: 28px;
+    font-size: 14px;
+  }
+  .drop-row { display: flex; gap: 20px; }
+  .drop-zone {
+    flex: 1;
+    border: 2px dashed var(--border-medium);
+    border-radius: 6px;
+    padding: 32px 20px;
+    text-align: center;
+    transition: all 0.15s;
+    cursor: pointer;
+    background: var(--bg-card);
+  }
+  .drop-zone.dragover {
+    border-color: var(--accent-blue);
+    background: var(--bg-hover);
+  }
+  .drop-zone.loaded {
+    border-color: var(--accent-green);
+    border-style: solid;
+  }
+  .drop-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+  }
+  .drop-hint {
+    font-size: 14px;
+    color: var(--text-secondary);
+  }
+  .drop-filename {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: var(--accent-green);
+    margin-top: 8px;
+    word-break: break-all;
+  }
+  .drop-meta {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+  .landing-actions {
+    display: flex; gap: 10px; justify-content: flex-end;
+    margin-top: 24px;
+  }
+  .landing-error {
+    color: var(--accent-red);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    margin-top: 12px;
+    min-height: 18px;
+  }
+
+  /* ── Verdict banner ─────────────────────────────────── */
+  .verdict-bar {
+    padding: 12px 24px;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+  }
+  .verdict-badge {
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .verdict-critical { background: var(--accent-red); color: #fff; }
+  .verdict-warning  { background: var(--accent-orange); color: var(--bg-deep); }
+  .verdict-info     { background: var(--accent-blue); color: var(--bg-deep); }
+  .verdict-unchanged{ background: var(--border-medium); color: var(--text-primary); }
+  .verdict-reasons { color: var(--text-secondary); flex: 1; }
+  .impairment-chip {
+    padding: 4px 10px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    color: var(--text-secondary);
+  }
+  .impairment-chip.bad { color: var(--accent-red); border-color: var(--accent-red); }
+  .impairment-chip.good { color: var(--accent-green); border-color: var(--accent-green); }
+  .impairment-chip.neutral { color: var(--text-muted); }
+
+  /* ── Main layout ────────────────────────────────────── */
+  .main {
+    display: grid;
+    grid-template-columns: 1fr 1fr 360px;
+    height: calc(100vh - 56px - 52px);
+  }
+  .pane {
+    position: relative;
+    overflow: hidden;
+    border-right: 1px solid var(--border-subtle);
+    background: var(--bg-deep);
+  }
+  .pane-header {
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    padding: 10px 16px;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border-subtle);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: var(--text-secondary);
+    z-index: 5;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .pane-label {
+    color: var(--accent-blue);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .pane-filename {
+    color: var(--text-muted);
+    font-size: 11px;
+    max-width: 60%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .canvas-area {
+    position: absolute;
+    top: 38px; left: 0; right: 0; bottom: 0;
+    overflow: hidden;
+  }
+  .canvas-area svg {
+    width: 100%; height: 100%;
+    cursor: grab;
+  }
+  .canvas-area svg:active { cursor: grabbing; }
+
+  /* ── Graph styling (mirrors graph.html) ─────────────── */
+  .node-box-default     { fill: var(--bg-card); stroke: var(--border-medium); stroke-width: 1.5; }
+  .node-box-ecmp        { fill: var(--bg-card); stroke: var(--accent-blue); stroke-width: 1.5; }
+  .node-box-convergence { fill: var(--bg-card); stroke: var(--accent-orange); stroke-width: 1.5; }
+  .node-box-terminal    { fill: var(--bg-card); stroke: var(--accent-green); stroke-width: 1.5; }
+  .node-box-unreachable { fill: var(--bg-card); stroke: var(--accent-red); stroke-width: 1.5; stroke-dasharray: 4 3; }
+
+  /* Diff annotations — applied as an outer halo + color override */
+  .node-halo {
+    fill: none;
+    stroke-width: 3;
+    pointer-events: none;
+  }
+  .node-halo-removed  { stroke: var(--diff-removed); }
+  .node-halo-added    { stroke: var(--diff-added); }
+  .node-halo-modified { stroke: var(--diff-modified); }
+
+  /* Hover emphasis — layered outside any existing diff halo */
+  .node-hover-ring {
+    fill: none;
+    stroke: var(--accent-cyan);
+    stroke-width: 2;
+    pointer-events: none;
+  }
+  /* When hovered, lift the node group's overall opacity so dimmed context
+     becomes readable as it's referenced. */
+  .node-group.hovered { opacity: 1 !important; }
+
+  /* Path overlay — draws the full trace of a removed/added/preserved path
+     on top of the existing edges. */
+  .path-overlay {
+    fill: none;
+    stroke-linecap: round;
+    pointer-events: none;
+  }
+  /* Preserved and added paths represent functioning forwarding — green,
+     solid, prominent. Removed paths are historical artifacts — dashed,
+     thinner, dimmed so they don't visually compete with the live fabric. */
+  .path-overlay-preserved {
+    stroke: var(--diff-added);
+    stroke-width: 5;
+    opacity: 0.85;
+  }
+  .path-overlay-added {
+    stroke: var(--diff-added);
+    stroke-width: 5;
+    opacity: 0.85;
+  }
+  .path-overlay-removed {
+    stroke: var(--diff-removed);
+    stroke-width: 3;
+    stroke-dasharray: 4 5;
+    opacity: 0.55;
+  }
+
+  .edge-default     { fill: none; stroke: var(--border-medium); stroke-width: 1.5; }
+  .edge-ecmp        { fill: none; stroke: var(--accent-blue); stroke-width: 2; }
+  .edge-convergence { fill: none; stroke: var(--accent-orange); stroke-width: 2; stroke-dasharray: 5 3; }
+  .edge-loop        { fill: none; stroke: var(--accent-red); stroke-width: 2; stroke-dasharray: 3 3; }
+  .edge-no-fib      { fill: none; stroke: var(--accent-neon-purple); stroke-width: 2; }
+
+  .edge-diff-removed  { stroke: var(--diff-removed) !important; stroke-width: 3 !important; stroke-dasharray: 6 4 !important; }
+  .edge-diff-added    { stroke: var(--diff-added)   !important; stroke-width: 3 !important; }
+  .edge-diff-modified { stroke: var(--diff-modified)!important; stroke-width: 2.5 !important; }
+
+  .edge-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    fill: var(--text-muted);
+  }
+  .node-hostname {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    fill: var(--text-primary);
+    font-weight: 500;
+  }
+  .node-platform {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9px;
+    fill: var(--text-muted);
+  }
+  .node-egress {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8px;
+    fill: var(--text-secondary);
+  }
+  .node-verdict-icon { font-size: 14px; font-weight: 700; }
+  .verdict-healthy      { fill: var(--accent-green); }
+  .verdict-unhealthy    { fill: var(--accent-red); }
+  .verdict-convergence  { fill: var(--accent-orange); }
+  .node-group { cursor: pointer; }
+
+  .empty-pane {
+    position: absolute; inset: 38px 0 0 0;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-muted);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 13px;
+  }
+
+  /* ── Delta sidebar ──────────────────────────────────── */
+  .delta-sidebar {
+    overflow-y: auto;
+    background: var(--bg-surface);
+    padding: 16px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+  }
+  .delta-section {
+    margin-bottom: 18px;
+  }
+  .delta-section-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border-subtle);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-size: 11px;
+  }
+  .delta-section-title.sev-critical  { color: var(--accent-red); border-color: var(--accent-red); }
+  .delta-section-title.sev-warning   { color: var(--accent-orange); border-color: var(--accent-orange); }
+  .delta-section-title.sev-info      { color: var(--accent-blue); border-color: var(--accent-blue); }
+  .delta-section-title.sev-preserved { color: var(--diff-added); border-color: var(--diff-added); }
+  .delta-section-title.sev-neutral   { color: var(--text-muted); }
+  .delta-count {
+    font-weight: 400;
+    color: var(--text-muted);
+  }
+  .delta-entry {
+    padding: 8px 10px;
+    margin-bottom: 4px;
+    background: var(--bg-card);
+    border-left: 3px solid var(--border-medium);
+    border-radius: 2px;
+    cursor: pointer;
+    transition: background 0.1s, border-color 0.1s;
+  }
+  .delta-entry:hover {
+    background: var(--bg-hover);
+  }
+  .delta-entry.hovered {
+    background: var(--bg-hover);
+  }
+  .delta-entry.path-active {
+    background: var(--bg-hover);
+    border-left-color: var(--accent-cyan) !important;
+    box-shadow: inset 0 0 0 1px var(--accent-cyan);
+  }
+  .delta-entry.sev-critical  { border-left-color: var(--accent-red); }
+  .delta-entry.sev-warning   { border-left-color: var(--accent-orange); }
+  .delta-entry.sev-info      { border-left-color: var(--accent-blue); }
+  .delta-entry.sev-preserved { border-left-color: var(--diff-added); }
+  .delta-entry-primary {
+    color: var(--text-primary);
+    font-weight: 500;
+    word-break: break-word;
+  }
+  .delta-entry-detail {
+    color: var(--text-muted);
+    font-size: 11px;
+    margin-top: 2px;
+    word-break: break-word;
+  }
+  .diff-removed { color: var(--diff-removed); }
+  .diff-added   { color: var(--diff-added); }
+  .diff-mod     { color: var(--diff-modified); }
+
+  /* Minimap / zoom controls */
+  .pane-controls {
+    position: absolute;
+    bottom: 10px; right: 10px;
+    display: flex; gap: 4px;
+    z-index: 5;
+  }
+  .ctrl-btn {
+    width: 28px; height: 28px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-secondary);
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+  }
+  .ctrl-btn:hover { background: var(--bg-hover); border-color: var(--accent-blue); }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-left">
+    <div class="logo">fibtrace<span>.diff</span></div>
+    <div class="header-meta" id="headerMeta"></div>
+  </div>
+  <div class="header-actions">
+    <button class="btn" id="resetBtn" style="display:none">Load different files</button>
+    <button class="btn" id="exportBtn" style="display:none">Export delta JSON</button>
+  </div>
+</div>
+
+<!-- ── Landing / File upload screen ──────────────────────── -->
+<div id="landing" class="landing">
+  <div class="landing-card">
+    <div class="landing-title">Forwarding Graph Diff</div>
+    <div class="landing-sub">
+      Drop two fibtrace graph JSONs. Accepts output of <code>fibtrace --graph</code>
+      or <code>fibtrace --json</code> (full trace with graph nested).
+    </div>
+
+    <div class="drop-row">
+      <div class="drop-zone" id="dropA" data-slot="A">
+        <div class="drop-label">File A — baseline</div>
+        <div class="drop-hint">Click to browse or drop JSON here</div>
+        <div class="drop-filename" id="filenameA"></div>
+        <div class="drop-meta" id="metaA"></div>
+      </div>
+      <div class="drop-zone" id="dropB" data-slot="B">
+        <div class="drop-label">File B — comparison</div>
+        <div class="drop-hint">Click to browse or drop JSON here</div>
+        <div class="drop-filename" id="filenameB"></div>
+        <div class="drop-meta" id="metaB"></div>
+      </div>
+    </div>
+
+    <div class="landing-error" id="landingError"></div>
+
+    <div class="landing-actions">
+      <button class="btn" id="swapBtn">Swap A ↔ B</button>
+      <button class="btn btn-primary" id="computeBtn" disabled>Compute diff</button>
+    </div>
+
+    <input type="file" id="fileInputA" accept=".json,application/json" style="display:none">
+    <input type="file" id="fileInputB" accept=".json,application/json" style="display:none">
+  </div>
+</div>
+
+<!-- ── Diff view (hidden until computed) ─────────────────── -->
+<div id="diffView" style="display:none">
+  <div class="verdict-bar" id="verdictBar"></div>
+  <div class="main">
+    <div class="pane" id="paneA">
+      <div class="pane-header">
+        <span class="pane-label">A — baseline</span>
+        <span class="pane-filename" id="paneFilenameA"></span>
+      </div>
+      <div class="canvas-area">
+        <svg id="svgA" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+      <div class="pane-controls">
+        <button class="ctrl-btn" data-pane="A" data-action="fit" title="Fit to view">⛶</button>
+        <button class="ctrl-btn" data-pane="A" data-action="zoomin">+</button>
+        <button class="ctrl-btn" data-pane="A" data-action="zoomout">−</button>
+      </div>
+    </div>
+    <div class="pane" id="paneB">
+      <div class="pane-header">
+        <span class="pane-label">B — comparison</span>
+        <span class="pane-filename" id="paneFilenameB"></span>
+      </div>
+      <div class="canvas-area">
+        <svg id="svgB" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+      <div class="pane-controls">
+        <button class="ctrl-btn" data-pane="B" data-action="fit" title="Fit to view">⛶</button>
+        <button class="ctrl-btn" data-pane="B" data-action="zoomin">+</button>
+        <button class="ctrl-btn" data-pane="B" data-action="zoomout">−</button>
+      </div>
+    </div>
+    <div class="delta-sidebar" id="deltaSidebar"></div>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════════════════════════════
+// Diff core — JS port of fibtrace_diff.py
+// ══════════════════════════════════════════════════════════
+
+const COMPARED_NODE_FIELDS = [
+  "verdict","reachable","platform","route_summary","fib_summary",
+  "is_terminal","is_connected","is_ecmp_branch","is_convergence",
+];
+const SET_NODE_FIELDS = ["egress_interfaces"];
+const IMPAIRMENT_CRITICAL_PCT = -0.50;
+const IMPAIRMENT_WARNING_PCT  = -0.25;
+
+function normalizeGraph(data) {
+  // Accept raw graph or full-trace JSON with graph nested under "graph"
+  if (data.graph && typeof data.graph === 'object' && data.graph.nodes) {
+    data = data.graph;
+  }
+  for (const k of ['meta','nodes','edges']) {
+    if (!(k in data)) {
+      throw new Error(`not a fibtrace graph — missing "${k}"`);
+    }
+  }
+  return data;
+}
+
+function edgeKey(e) {
+  return [e.from, e.to, e.next_hop_ip ?? '', e.egress_interface ?? ''].join('|');
+}
+
+function nodeFieldDiff(a, b) {
+  const changes = [];
+  for (const f of COMPARED_NODE_FIELDS) {
+    if (a[f] !== b[f]) changes.push({ field:f, from:a[f], to:b[f] });
+  }
+  for (const f of SET_NODE_FIELDS) {
+    const av = new Set(a[f] || []);
+    const bv = new Set(b[f] || []);
+    const removed = [...av].filter(x => !bv.has(x)).sort();
+    const added   = [...bv].filter(x => !av.has(x)).sort();
+    if (removed.length || added.length) {
+      changes.push({ field:f, removed, added });
+    }
+  }
+  return changes;
+}
+
+function severityOfNodeChange(c) {
+  if (c.field === 'verdict') {
+    const bad = new Set(['warning','critical','unreachable']);
+    const good = new Set(['healthy']);
+    if (good.has(c.from) && bad.has(c.to)) return 'critical';
+    if (bad.has(c.from) && good.has(c.to)) return 'info';
+    return 'warning';
+  }
+  if (c.field === 'reachable') {
+    if (c.from === true && c.to === false) return 'critical';
+    if (c.from === false && c.to === true) return 'info';
+    return 'warning';
+  }
+  if (c.field === 'is_ecmp_branch') {
+    return (c.from && !c.to) ? 'warning' : 'info';
+  }
+  if (c.field === 'fib_summary') return 'warning';
+  if (c.field === 'egress_interfaces') return 'warning';
+  if (c.field === 'route_summary') return 'warning';
+  return 'info';
+}
+function maxSeverity(list) {
+  const order = { critical:3, warning:2, info:1 };
+  return list.reduce((best, s) => order[s] > order[best] ? s : best, 'info');
+}
+
+function computeImpairment(a, b, aPaths, bPaths) {
+  const pct = (before, after) => before === 0 ? null : (after - before) / before;
+
+  const aOut = {}, bOut = {};
+  for (const e of a.edges) aOut[e.from] = (aOut[e.from] || 0) + 1;
+  for (const e of b.edges) bOut[e.from] = (bOut[e.from] || 0) + 1;
+
+  const ecmpBranchesA = Object.entries(a.nodes)
+    .filter(([_, n]) => n.is_ecmp_branch).map(([h]) => h);
+  const widthA = ecmpBranchesA.reduce((s,h) => s + (aOut[h]||0), 0);
+  const widthB = ecmpBranchesA.reduce((s,h) => s + (bOut[h]||0), 0);
+
+  const aSet = new Set([...aPaths].map(p => p.join('\x1f')));
+  const bSet = new Set([...bPaths].map(p => p.join('\x1f')));
+  const unionSz = new Set([...aSet, ...bSet]).size;
+  const interSz = [...aSet].filter(x => bSet.has(x)).length;
+  const churn = unionSz > 0 ? (unionSz - interSz) / unionSz : 0;
+
+  return {
+    paths_pct: pct(aPaths.length, bPaths.length),
+    edges_pct: pct(a.edges.length, b.edges.length),
+    ecmp_width_pct: pct(widthA, widthB),
+    churn_pct: churn,
+    paths_before: aPaths.length, paths_after: bPaths.length,
+    ecmp_width_before: widthA, ecmp_width_after: widthB,
+  };
+}
+
+function computeVerdict(imp, sevCounts, hasVerdictWorsened, hasReachabilityLoss) {
+  const reasons = [];
+  const crosses = (p, t) => p !== null && p !== undefined && p <= t;
+  const pct = v => (v * 100).toFixed(0);
+
+  if (hasVerdictWorsened) reasons.push('verdict worsened on one or more devices');
+  if (hasReachabilityLoss) reasons.push('device became unreachable');
+  if (crosses(imp.paths_pct, IMPAIRMENT_CRITICAL_PCT))
+    reasons.push(`path impairment ${pct(imp.paths_pct)}%`);
+  if (crosses(imp.ecmp_width_pct, IMPAIRMENT_CRITICAL_PCT))
+    reasons.push(`ECMP width impairment ${pct(imp.ecmp_width_pct)}%`);
+  if (reasons.length) return { level:'critical', reasons };
+
+  if (crosses(imp.paths_pct, IMPAIRMENT_WARNING_PCT))
+    reasons.push(`path impairment ${pct(imp.paths_pct)}%`);
+  if (crosses(imp.edges_pct, IMPAIRMENT_WARNING_PCT))
+    reasons.push(`edge impairment ${pct(imp.edges_pct)}%`);
+  if (crosses(imp.ecmp_width_pct, IMPAIRMENT_WARNING_PCT))
+    reasons.push(`ECMP width impairment ${pct(imp.ecmp_width_pct)}%`);
+  if (sevCounts.warning > 0 && !reasons.length)
+    reasons.push(`${sevCounts.warning} warning-level changes`);
+  if (reasons.length) return { level:'warning', reasons };
+
+  const total = sevCounts.critical + sevCounts.warning + sevCounts.info;
+  if (total > 0 || imp.churn_pct > 0)
+    return { level:'info', reasons:['changes present, no capacity impairment'] };
+  return { level:'unchanged', reasons:[] };
+}
+
+function diffGraphs(a, b) {
+  const aNodeKeys = new Set(Object.keys(a.nodes));
+  const bNodeKeys = new Set(Object.keys(b.nodes));
+  const removedNodes = [...aNodeKeys].filter(h => !bNodeKeys.has(h)).sort();
+  const addedNodes   = [...bNodeKeys].filter(h => !aNodeKeys.has(h)).sort();
+  const common = [...aNodeKeys].filter(h => bNodeKeys.has(h)).sort();
+
+  const modifiedNodes = [];
+  let hasVerdictWorsened = false, hasReachabilityLoss = false;
+  for (const h of common) {
+    const changes = nodeFieldDiff(a.nodes[h], b.nodes[h]);
+    if (changes.length) {
+      const sev = maxSeverity(changes.map(severityOfNodeChange));
+      modifiedNodes.push({ hostname:h, severity:sev, changes });
+      for (const c of changes) {
+        if (c.field === 'verdict'
+            && ['warning','critical','unreachable'].includes(c.to)
+            && c.from === 'healthy') hasVerdictWorsened = true;
+        if (c.field === 'reachable' && c.from === true && c.to === false)
+          hasReachabilityLoss = true;
+      }
+    }
+  }
+
+  const aEdges = new Map(), bEdges = new Map();
+  for (const e of a.edges) aEdges.set(edgeKey(e), e);
+  for (const e of b.edges) bEdges.set(edgeKey(e), e);
+  const removedEdges = [...aEdges.keys()].filter(k => !bEdges.has(k)).sort().map(k => aEdges.get(k));
+  const addedEdges   = [...bEdges.keys()].filter(k => !aEdges.has(k)).sort().map(k => bEdges.get(k));
+
+  const aPathsArr = (a.meta.paths || []).map(p => [...p]);
+  const bPathsArr = (b.meta.paths || []).map(p => [...p]);
+  const aPathKeys = new Set(aPathsArr.map(p => p.join('\x1f')));
+  const bPathKeys = new Set(bPathsArr.map(p => p.join('\x1f')));
+  const removedPaths  = [...aPathKeys].filter(k => !bPathKeys.has(k)).sort().map(k => k.split('\x1f'));
+  const addedPaths    = [...bPathKeys].filter(k => !aPathKeys.has(k)).sort().map(k => k.split('\x1f'));
+  const preservedPaths = [...aPathKeys].filter(k => bPathKeys.has(k)).sort().map(k => k.split('\x1f'));
+
+  const sevCounts = { critical:0, warning:0, info:0 };
+  for (const h of removedNodes) {
+    const onPath = aPathsArr.some(p => p.includes(h));
+    sevCounts[onPath ? 'critical' : 'warning']++;
+  }
+  sevCounts.info += addedNodes.length;
+  for (const n of modifiedNodes) sevCounts[n.severity]++;
+  sevCounts.warning += removedEdges.length;
+  sevCounts.info    += addedEdges.length;
+  sevCounts.warning += removedPaths.length;
+  sevCounts.info    += addedPaths.length;
+
+  const impairment = computeImpairment(a, b, aPathsArr, bPathsArr);
+  const verdict = computeVerdict(impairment, sevCounts, hasVerdictWorsened, hasReachabilityLoss);
+
+  return {
+    schema_version: 1,
+    a: {
+      target_prefix: a.meta.target_prefix, source_host: a.meta.source_host,
+      total_devices: a.meta.total_devices, total_edges: a.meta.total_edges,
+      total_paths: aPathsArr.length,
+    },
+    b: {
+      target_prefix: b.meta.target_prefix, source_host: b.meta.source_host,
+      total_devices: b.meta.total_devices, total_edges: b.meta.total_edges,
+      total_paths: bPathsArr.length,
+    },
+    meta_delta: {
+      devices: b.meta.total_devices - a.meta.total_devices,
+      edges:   b.meta.total_edges   - a.meta.total_edges,
+      paths:   bPathsArr.length - aPathsArr.length,
+    },
+    impairment, verdict, severity_counts: sevCounts,
+    nodes: { removed: removedNodes, added: addedNodes, modified: modifiedNodes },
+    edges: { removed: removedEdges, added: addedEdges },
+    paths: { removed: removedPaths, added: addedPaths, preserved: preservedPaths },
+  };
+}
+
+// ══════════════════════════════════════════════════════════
+// Cross-pane interaction: hover sync + path overlay
+// ══════════════════════════════════════════════════════════
+//
+// HoverBus: any component (graph node, sidebar entry) can publish a set of
+// hostnames being hovered, and any component (both graph panes, sidebar)
+// can subscribe to receive updates. This wires both panes + the sidebar
+// together so hovering anything that mentions a hostname highlights all
+// other references to it.
+
+const HoverBus = {
+  highlighted: new Set(),
+  listeners: [],
+  set(hostnames) {
+    this.highlighted = hostnames instanceof Set ? hostnames : new Set(hostnames || []);
+    this.listeners.forEach(fn => fn(this.highlighted));
+  },
+  clear() { this.set([]); },
+  subscribe(fn) { this.listeners.push(fn); },
+  reset() { this.listeners = []; this.clear(); },
+};
+
+// PathOverlayController: tracks which sidebar entry (if any) has its path
+// overlay currently drawn, which pane(s) it was drawn on, and handles
+// toggle semantics (click same entry → clear; click different → replace).
+// Preserved paths draw on both panes; removed on A; added on B.
+const PathOverlay = {
+  activeEntry: null,
+  activePanes: [],
+  set(entryId, panes /* ['A'] | ['B'] | ['A','B'] */, nodeSequence, kind) {
+    if (this.activeEntry === entryId) {
+      this.clear();
+      return false;
+    }
+    this.clear();
+    let drewAny = false;
+    panes.forEach(p => {
+      const r = p === 'A' ? state.rendererA : state.rendererB;
+      if (r && r.hasAnyOfPath(nodeSequence)) {
+        if (r.setPathOverlay(nodeSequence, kind)) drewAny = true;
+      }
+    });
+    if (drewAny) {
+      this.activeEntry = entryId;
+      this.activePanes = panes.slice();
+    }
+    return drewAny;
+  },
+  clear() {
+    this.activePanes.forEach(p => {
+      const r = p === 'A' ? state.rendererA : state.rendererB;
+      if (r) r.clearPathOverlay();
+    });
+    this.activeEntry = null;
+    this.activePanes = [];
+  },
+  reset() { this.clear(); },
+};
+
+// ══════════════════════════════════════════════════════════
+// Graph renderer — one instance per pane
+// ══════════════════════════════════════════════════════════
+//
+// Mirrors graph.html's SVG renderer. Accepts an annotation overlay
+// that maps hostnames and edge keys to diff classes.
+
+const NODE_W = 180, NODE_H = 70, NODE_GAP = 40, LEVEL_GAP = 80;
+
+class GraphRenderer {
+  constructor(svgId, paneLabel) {
+    this.svg = document.getElementById(svgId);
+    this.paneLabel = paneLabel;
+    this.data = null;
+    this.annotations = { nodes: new Map(), edges: new Map() };
+    this.positions = {};
+    this.transform = { x:0, y:0, scale:1 };
+    this.focused = null;
+    this._attachPanZoom();
+  }
+
+  setData(data, annotations) {
+    this.data = data;
+    this.annotations = annotations || { nodes:new Map(), edges:new Map() };
+    this._layout();
+    this._render();
+  }
+
+  _layout() {
+    if (!this.data) return;
+    const nodes = this.data.nodes;
+    const depthGroups = {};
+    for (const [h, n] of Object.entries(nodes)) {
+      const d = n.depth ?? 0;
+      (depthGroups[d] = depthGroups[d] || []).push(h);
+    }
+    const depths = Object.keys(depthGroups).map(Number).sort((a,b)=>a-b);
+    for (let i = 1; i < depths.length; i++) {
+      const grp = depthGroups[depths[i]];
+      grp.sort((a,b) => {
+        const pa = nodes[a].parents || [], pb = nodes[b].parents || [];
+        const prev = depthGroups[depths[i-1]] || [];
+        return (pa.length ? prev.indexOf(pa[0]) : 0) - (pb.length ? prev.indexOf(pb[0]) : 0);
+      });
+    }
+    this.positions = {};
+    const maxGroupSize = Math.max(...Object.values(depthGroups).map(g => g.length));
+    const totalWidth = maxGroupSize * (NODE_W + NODE_GAP) - NODE_GAP;
+    for (const d of depths) {
+      const group = depthGroups[d];
+      const groupWidth = group.length * (NODE_W + NODE_GAP) - NODE_GAP;
+      const startX = (totalWidth - groupWidth) / 2;
+      const di = depths.indexOf(d);
+      group.forEach((h, i) => {
+        this.positions[h] = { x: startX + i*(NODE_W + NODE_GAP), y: di*(NODE_H + LEVEL_GAP) };
+      });
+    }
+    const rect = this.svg.getBoundingClientRect();
+    const graphH = (depths.length - 1) * (NODE_H + LEVEL_GAP) + NODE_H;
+    const graphW = totalWidth + NODE_W;
+    this.transform.scale = Math.min((rect.width-60)/graphW, (rect.height-60)/graphH, 1.2);
+    this.transform.x = (rect.width - graphW*this.transform.scale) / 2;
+    this.transform.y = (rect.height - graphH*this.transform.scale) / 2;
+    this._graphExtent = { w: graphW, h: graphH };
+  }
+
+  _render() {
+    this.svg.innerHTML = '';
+    if (!this.data) return;
+
+    const defs = document.createElementNS('http://www.w3.org/2000/svg','defs');
+    [
+      {id:`${this.paneLabel}-arr-default`, color:'#2a3a4e'},
+      {id:`${this.paneLabel}-arr-ecmp`,    color:'#00d4ff'},
+      {id:`${this.paneLabel}-arr-conv`,    color:'#ffaa33'},
+      {id:`${this.paneLabel}-arr-loop`,    color:'#ff4466'},
+      {id:`${this.paneLabel}-arr-removed`, color:'#ff4466'},
+      {id:`${this.paneLabel}-arr-added`,   color:'#00e88f'},
+      {id:`${this.paneLabel}-arr-mod`,     color:'#ffaa33'},
+    ].forEach(m => {
+      const marker = document.createElementNS('http://www.w3.org/2000/svg','marker');
+      marker.setAttribute('id', m.id);
+      marker.setAttribute('viewBox','0 0 10 7');
+      marker.setAttribute('refX','10'); marker.setAttribute('refY','3.5');
+      marker.setAttribute('markerWidth','8'); marker.setAttribute('markerHeight','6');
+      marker.setAttribute('orient','auto');
+      const poly = document.createElementNS('http://www.w3.org/2000/svg','polygon');
+      poly.setAttribute('points','0 0, 10 3.5, 0 7'); poly.setAttribute('fill', m.color);
+      marker.appendChild(poly); defs.appendChild(marker);
+    });
+    this.svg.appendChild(defs);
+
+    const g = document.createElementNS('http://www.w3.org/2000/svg','g');
+    g.setAttribute('transform', `translate(${this.transform.x},${this.transform.y}) scale(${this.transform.scale})`);
+    g.id = `group-${this.paneLabel}`;
+    this._layer = g;
+
+    // Edges
+    this.data.edges.forEach(edge => {
+      const from = this.positions[edge.from], to = this.positions[edge.to];
+      if (!from || !to) return;
+      const x1 = from.x+NODE_W/2, y1 = from.y+NODE_H;
+      const x2 = to.x+NODE_W/2,   y2 = to.y;
+      const midY = (y1+y2)/2;
+      const d = `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`;
+      const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+      path.setAttribute('d', d); path.setAttribute('fill', 'none');
+
+      let baseClass = 'edge-default';
+      let markerRef = `url(#${this.paneLabel}-arr-default)`;
+      if (edge.is_loop)              { baseClass='edge-loop';        markerRef=`url(#${this.paneLabel}-arr-loop)`; }
+      else if (edge.is_convergence)  { baseClass='edge-convergence'; markerRef=`url(#${this.paneLabel}-arr-conv)`; }
+      else if (edge.is_ecmp_sibling) { baseClass='edge-ecmp';        markerRef=`url(#${this.paneLabel}-arr-ecmp)`; }
+
+      const anno = this.annotations.edges.get(edgeKey(edge));
+      let cls = `edge-line ${baseClass}`;
+      if (anno === 'removed')  { cls += ' edge-diff-removed';  markerRef = `url(#${this.paneLabel}-arr-removed)`; }
+      else if (anno === 'added'){ cls += ' edge-diff-added';    markerRef = `url(#${this.paneLabel}-arr-added)`; }
+      else if (anno === 'modified'){ cls += ' edge-diff-modified'; markerRef = `url(#${this.paneLabel}-arr-mod)`; }
+      else {
+        // Non-annotated edges get dimmed when diff mode is active
+        path.setAttribute('opacity', '0.28');
+      }
+
+      path.setAttribute('class', cls);
+      path.setAttribute('marker-end', markerRef);
+      path.dataset.edgeKey = edgeKey(edge);
+      g.appendChild(path);
+
+      if (edge.egress_interface) {
+        const lx = (x1+x2)/2 + (x2>x1?8:-8), ly = midY-4;
+        const label = document.createElementNS('http://www.w3.org/2000/svg','text');
+        label.setAttribute('x', lx); label.setAttribute('y', ly);
+        label.setAttribute('text-anchor','middle');
+        label.setAttribute('class','edge-label');
+        if (!anno) label.setAttribute('opacity','0.28');
+        label.textContent = edge.egress_interface;
+        g.appendChild(label);
+      }
+    });
+
+    // Nodes
+    for (const [hostname, node] of Object.entries(this.data.nodes)) {
+      const pos = this.positions[hostname];
+      if (!pos) continue;
+      const ng = document.createElementNS('http://www.w3.org/2000/svg','g');
+      ng.setAttribute('class','node-group');
+      ng.setAttribute('transform', `translate(${pos.x},${pos.y})`);
+      ng.dataset.hostname = hostname;
+      ng.addEventListener('mouseenter', () => HoverBus.set([hostname]));
+      ng.addEventListener('mouseleave', () => HoverBus.clear());
+      const anno = this.annotations.nodes.get(hostname);
+      if (!anno) ng.setAttribute('opacity', '0.45');
+
+      // Halo (outer diff ring)
+      if (anno) {
+        const halo = document.createElementNS('http://www.w3.org/2000/svg','rect');
+        halo.setAttribute('x', -4); halo.setAttribute('y', -4);
+        halo.setAttribute('width', NODE_W+8); halo.setAttribute('height', NODE_H+8);
+        halo.setAttribute('rx', 12); halo.setAttribute('ry', 12);
+        halo.setAttribute('class', `node-halo node-halo-${anno}`);
+        ng.appendChild(halo);
+      }
+
+      const rect = document.createElementNS('http://www.w3.org/2000/svg','rect');
+      rect.setAttribute('width', NODE_W); rect.setAttribute('height', NODE_H);
+      rect.setAttribute('rx','10'); rect.setAttribute('ry','10');
+      let boxClass = 'node-box ';
+      if (!node.reachable) boxClass += 'node-box-unreachable';
+      else if (node.is_ecmp_branch) boxClass += 'node-box-ecmp';
+      else if (node.is_convergence) boxClass += 'node-box-convergence';
+      else if (node.is_terminal) boxClass += 'node-box-terminal';
+      else boxClass += 'node-box-default';
+      rect.setAttribute('class', boxClass);
+      ng.appendChild(rect);
+
+      const icon = document.createElementNS('http://www.w3.org/2000/svg','text');
+      icon.setAttribute('x','14'); icon.setAttribute('y','28');
+      let iconClass = 'node-verdict-icon ';
+      if (node.verdict === 'healthy') { icon.textContent = '✓'; iconClass += 'verdict-healthy'; }
+      else if (node.verdict === 'convergence') { icon.textContent = '↪'; iconClass += 'verdict-convergence'; }
+      else { icon.textContent = '✗'; iconClass += 'verdict-unhealthy'; }
+      icon.setAttribute('class', iconClass);
+      ng.appendChild(icon);
+
+      const name = document.createElementNS('http://www.w3.org/2000/svg','text');
+      name.setAttribute('x','32'); name.setAttribute('y','28');
+      name.setAttribute('class','node-hostname');
+      name.textContent = hostname;
+      ng.appendChild(name);
+
+      const plat = document.createElementNS('http://www.w3.org/2000/svg','text');
+      plat.setAttribute('x','32'); plat.setAttribute('y','42');
+      plat.setAttribute('class','node-platform');
+      plat.textContent = node.platform || '';
+      ng.appendChild(plat);
+
+      const eg = document.createElementNS('http://www.w3.org/2000/svg','text');
+      eg.setAttribute('x','14'); eg.setAttribute('y','58');
+      eg.setAttribute('class','node-egress');
+      eg.textContent = (node.egress_interfaces || []).slice(0,3).join(', ');
+      ng.appendChild(eg);
+
+      g.appendChild(ng);
+    }
+
+    this.svg.appendChild(g);
+  }
+
+  _applyTransform() {
+    if (!this._layer) return;
+    this._layer.setAttribute('transform',
+      `translate(${this.transform.x},${this.transform.y}) scale(${this.transform.scale})`);
+  }
+
+  _attachPanZoom() {
+    let dragging = false, last = null;
+    this.svg.addEventListener('mousedown', e => {
+      dragging = true; last = { x: e.clientX, y: e.clientY };
+    });
+    window.addEventListener('mouseup', () => { dragging = false; last = null; });
+    window.addEventListener('mousemove', e => {
+      if (!dragging) return;
+      const dx = e.clientX - last.x, dy = e.clientY - last.y;
+      last = { x: e.clientX, y: e.clientY };
+      this.transform.x += dx; this.transform.y += dy;
+      this._applyTransform();
+    });
+    this.svg.addEventListener('wheel', e => {
+      e.preventDefault();
+      const factor = e.deltaY < 0 ? 1.1 : 0.9;
+      const rect = this.svg.getBoundingClientRect();
+      const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+      const sx = (mx - this.transform.x) / this.transform.scale;
+      const sy = (my - this.transform.y) / this.transform.scale;
+      this.transform.scale *= factor;
+      this.transform.x = mx - sx * this.transform.scale;
+      this.transform.y = my - sy * this.transform.scale;
+      this._applyTransform();
+    }, { passive: false });
+  }
+
+  fit() { this._layout(); this._render(); }
+  zoom(factor) {
+    const rect = this.svg.getBoundingClientRect();
+    const cx = rect.width/2, cy = rect.height/2;
+    const sx = (cx - this.transform.x) / this.transform.scale;
+    const sy = (cy - this.transform.y) / this.transform.scale;
+    this.transform.scale *= factor;
+    this.transform.x = cx - sx * this.transform.scale;
+    this.transform.y = cy - sy * this.transform.scale;
+    this._applyTransform();
+  }
+
+  focusNode() { /* deliberately no-op — replaced by hover-sync */ }
+  focusPath() { /* deliberately no-op — replaced by path overlay */ }
+
+  // ── Hover-sync: given a Set of hostnames, toggle the cyan ring on
+  //    matching node groups in this pane. Dimmed nodes also un-dim so they
+  //    become readable when referenced from the other pane or the sidebar.
+  setHoveredHostnames(hostnames) {
+    if (!this._layer) return;
+    const set = hostnames instanceof Set ? hostnames : new Set(hostnames || []);
+    this._layer.querySelectorAll('.node-group').forEach(ng => {
+      const h = ng.dataset.hostname;
+      const hovered = set.has(h);
+      ng.classList.toggle('hovered', hovered);
+      // Remove existing hover ring
+      const existing = ng.querySelector('.node-hover-ring');
+      if (existing) existing.remove();
+      if (hovered) {
+        const ring = document.createElementNS('http://www.w3.org/2000/svg','rect');
+        ring.setAttribute('x', -8); ring.setAttribute('y', -8);
+        ring.setAttribute('width', NODE_W+16);
+        ring.setAttribute('height', NODE_H+16);
+        ring.setAttribute('rx', 14); ring.setAttribute('ry', 14);
+        ring.setAttribute('class', 'node-hover-ring');
+        ng.insertBefore(ring, ng.firstChild);
+      }
+    });
+  }
+
+  // ── Path overlay: draw a thick colored trace along the sequence of
+  //    hostnames. Clears any previous overlay. Returns true if any segment
+  //    was drawn (i.e. at least two consecutive hostnames are present in
+  //    this pane's layout).
+  setPathOverlay(nodeSequence, kind /* 'removed' | 'added' */) {
+    this.clearPathOverlay();
+    if (!this._layer || !nodeSequence || nodeSequence.length < 2) return false;
+    const overlayGroup = document.createElementNS('http://www.w3.org/2000/svg','g');
+    overlayGroup.setAttribute('class', 'path-overlay-group');
+    let drew = false;
+    for (let i = 0; i < nodeSequence.length - 1; i++) {
+      const fromPos = this.positions[nodeSequence[i]];
+      const toPos   = this.positions[nodeSequence[i+1]];
+      if (!fromPos || !toPos) continue;
+      const x1 = fromPos.x + NODE_W/2, y1 = fromPos.y + NODE_H;
+      const x2 = toPos.x   + NODE_W/2, y2 = toPos.y;
+      const midY = (y1 + y2) / 2;
+      const d = `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`;
+      const seg = document.createElementNS('http://www.w3.org/2000/svg','path');
+      seg.setAttribute('d', d);
+      seg.setAttribute('class', `path-overlay path-overlay-${kind}`);
+      overlayGroup.appendChild(seg);
+      drew = true;
+    }
+    this._layer.appendChild(overlayGroup);
+    this._activeOverlay = overlayGroup;
+    return drew;
+  }
+
+  clearPathOverlay() {
+    if (this._activeOverlay) {
+      this._activeOverlay.remove();
+      this._activeOverlay = null;
+    }
+  }
+
+  // Returns true if this pane contains any node from the given sequence
+  hasAnyOfPath(nodeSequence) {
+    return (nodeSequence || []).some(h => this.positions[h]);
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// Annotation builder — from diff → per-pane overlay
+// ══════════════════════════════════════════════════════════
+
+function buildAnnotations(delta) {
+  const A = { nodes: new Map(), edges: new Map() };
+  const B = { nodes: new Map(), edges: new Map() };
+
+  for (const h of delta.nodes.removed) A.nodes.set(h, 'removed');
+  for (const h of delta.nodes.added)   B.nodes.set(h, 'added');
+  for (const m of delta.nodes.modified) {
+    A.nodes.set(m.hostname, 'modified');
+    B.nodes.set(m.hostname, 'modified');
+  }
+  for (const e of delta.edges.removed) A.edges.set(edgeKey(e), 'removed');
+  for (const e of delta.edges.added)   B.edges.set(edgeKey(e), 'added');
+
+  return { A, B };
+}
+
+// ══════════════════════════════════════════════════════════
+// Delta sidebar rendering
+// ══════════════════════════════════════════════════════════
+
+function renderDeltaSidebar(delta, rendererA, rendererB) {
+  const sb = document.getElementById('deltaSidebar');
+  sb.innerHTML = '';
+
+  const critical = delta.nodes.modified.filter(m => m.severity === 'critical');
+  const warnMods = delta.nodes.modified.filter(m => m.severity === 'warning');
+  const infoMods = delta.nodes.modified.filter(m => m.severity === 'info');
+
+  const anything = critical.length || warnMods.length || infoMods.length
+    || delta.nodes.removed.length || delta.nodes.added.length
+    || delta.edges.removed.length || delta.edges.added.length
+    || delta.paths.removed.length || delta.paths.added.length;
+  if (!anything) {
+    const div = document.createElement('div');
+    div.style.padding = '20px';
+    div.style.color = 'var(--text-muted)';
+    div.style.textAlign = 'center';
+    div.textContent = 'No changes detected.';
+    sb.appendChild(div);
+    return;
+  }
+
+  function section(title, sev, count) {
+    const s = document.createElement('div');
+    s.className = 'delta-section';
+    const t = document.createElement('div');
+    t.className = `delta-section-title sev-${sev}`;
+    t.innerHTML = `<span>${title}</span><span class="delta-count">${count}</span>`;
+    s.appendChild(t);
+    return s;
+  }
+
+  // Every entry carries:
+  //   hostnames: which hostnames this entry references (for hover-sync)
+  //   pathToggle: optional {id, sequence, kind} — if present, clicking this
+  //               entry toggles a path overlay on whichever pane contains
+  //               the sequence.
+  let entryCounter = 0;
+  function entry({ primaryHTML, detailHTML, sev, hostnames = [], pathToggle = null }) {
+    const e = document.createElement('div');
+    e.className = `delta-entry sev-${sev}`;
+    e.dataset.hostnames = hostnames.join(',');
+    e.dataset.entryId = `e${entryCounter++}`;
+    e.innerHTML = `
+      <div class="delta-entry-primary">${primaryHTML}</div>
+      ${detailHTML ? `<div class="delta-entry-detail">${detailHTML}</div>` : ''}
+    `;
+    // Hover sync — emit the hostnames this entry is about
+    e.addEventListener('mouseenter', () => HoverBus.set(hostnames));
+    e.addEventListener('mouseleave', () => HoverBus.clear());
+
+    // Path-toggle click semantics
+    if (pathToggle) {
+      e.style.cursor = 'pointer';
+      e.addEventListener('click', () => {
+        const { id, sequence, kind } = pathToggle;
+        // Which pane(s) should receive the overlay?
+        //   removed   → A only (path used to exist there)
+        //   added     → B only (path is new)
+        //   preserved → both (path exists in both snapshots)
+        let panes;
+        if (kind === 'removed')        panes = ['A'];
+        else if (kind === 'added')     panes = ['B'];
+        else if (kind === 'preserved') panes = ['A', 'B'];
+        else                           panes = [];
+        const drew = PathOverlay.set(id, panes, sequence, kind);
+        // Reflect active state on the entry
+        document.querySelectorAll('.delta-entry.path-active')
+          .forEach(el => el.classList.remove('path-active'));
+        if (drew) e.classList.add('path-active');
+      });
+    } else {
+      // Non-path entries are not clickable in any pan/focus sense — they
+      // are informational. The hover sync is the interaction.
+      e.style.cursor = 'default';
+    }
+    return e;
+  }
+
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  // Also update the "anything" check for the new preserved section
+  // (preserved-only case with no changes anywhere else is still rendered
+  // as a "nothing changed" state — preserved paths are always implied by
+  // unchanged graphs, so we only surface them when there are other deltas).
+
+  // CRITICAL modified nodes
+  if (critical.length) {
+    const s = section('Critical changes', 'critical', critical.length);
+    for (const m of critical) {
+      const changeLines = m.changes.map(c => {
+        if ('from' in c) return `${esc(c.field)}: <span class="diff-removed">${esc(c.from)}</span> → <span class="diff-added">${esc(c.to)}</span>`;
+        return `${esc(c.field)}: <span class="diff-removed">-{${esc((c.removed||[]).join(', '))}}</span> <span class="diff-added">+{${esc((c.added||[]).join(', '))}}</span>`;
+      }).join('<br>');
+      s.appendChild(entry({
+        primaryHTML: esc(m.hostname),
+        detailHTML: changeLines,
+        sev: 'critical',
+        hostnames: [m.hostname],
+      }));
+    }
+    sb.appendChild(s);
+  }
+
+  // Paths preserved — surviving routes through the functioning fabric.
+  // This is the reassurance section: "here's what's still carrying traffic."
+  if ((delta.paths.preserved || []).length) {
+    const s = section('Paths preserved', 'preserved', delta.paths.preserved.length);
+    delta.paths.preserved.forEach((p, i) => {
+      const label = p.map(esc).join(' → ');
+      s.appendChild(entry({
+        primaryHTML: `<span class="diff-added">Path</span>`,
+        detailHTML: label + ' <span style="color:var(--text-muted);font-style:italic">· click to trace on both</span>',
+        sev: 'preserved',
+        hostnames: p,
+        pathToggle: { id: `preserved-${i}`, sequence: p, kind: 'preserved' },
+      }));
+    });
+    sb.appendChild(s);
+  }
+
+  if (delta.nodes.removed.length) {
+    const s = section('Nodes removed in B', 'critical', delta.nodes.removed.length);
+    for (const h of delta.nodes.removed) {
+      s.appendChild(entry({
+        primaryHTML: `<span class="diff-removed">${esc(h)}</span>`,
+        detailHTML: 'no longer in graph B',
+        sev: 'critical',
+        hostnames: [h],
+      }));
+    }
+    sb.appendChild(s);
+  }
+
+  if (delta.paths.removed.length) {
+    const s = section('Paths removed', 'warning', delta.paths.removed.length);
+    delta.paths.removed.forEach((p, i) => {
+      const label = p.map(esc).join(' → ');
+      s.appendChild(entry({
+        primaryHTML: `<span class="diff-removed">Path</span>`,
+        detailHTML: label + ' <span style="color:var(--text-muted);font-style:italic">· click to trace (historical)</span>',
+        sev: 'warning',
+        hostnames: p,
+        pathToggle: { id: `removed-${i}`, sequence: p, kind: 'removed' },
+      }));
+    });
+    sb.appendChild(s);
+  }
+
+  if (delta.edges.removed.length) {
+    const s = section('Edges removed', 'warning', delta.edges.removed.length);
+    for (const e of delta.edges.removed) {
+      s.appendChild(entry({
+        primaryHTML: `<span class="diff-removed">${esc(e.from)} → ${esc(e.to)}</span>`,
+        detailHTML: `via ${esc(e.egress_interface||'—')} (nh ${esc(e.next_hop_ip||'—')})`,
+        sev: 'warning',
+        hostnames: [e.from, e.to],
+      }));
+    }
+    sb.appendChild(s);
+  }
+
+  if (warnMods.length) {
+    const s = section('Warnings', 'warning', warnMods.length);
+    for (const m of warnMods) {
+      const changeLines = m.changes.map(c => {
+        if ('from' in c) return `${esc(c.field)}: ${esc(c.from)} → ${esc(c.to)}`;
+        return `${esc(c.field)}: -{${esc((c.removed||[]).join(', '))}} +{${esc((c.added||[]).join(', '))}}`;
+      }).join('<br>');
+      s.appendChild(entry({
+        primaryHTML: esc(m.hostname),
+        detailHTML: changeLines,
+        sev: 'warning',
+        hostnames: [m.hostname],
+      }));
+    }
+    sb.appendChild(s);
+  }
+
+  if (delta.nodes.added.length) {
+    const s = section('Nodes added in B', 'info', delta.nodes.added.length);
+    for (const h of delta.nodes.added) {
+      s.appendChild(entry({
+        primaryHTML: `<span class="diff-added">${esc(h)}</span>`,
+        detailHTML: 'new in graph B',
+        sev: 'info',
+        hostnames: [h],
+      }));
+    }
+    sb.appendChild(s);
+  }
+
+  if (delta.paths.added.length) {
+    const s = section('Paths added', 'info', delta.paths.added.length);
+    delta.paths.added.forEach((p, i) => {
+      const label = p.map(esc).join(' → ');
+      s.appendChild(entry({
+        primaryHTML: `<span class="diff-added">Path</span>`,
+        detailHTML: label + ' <span style="color:var(--text-muted);font-style:italic">· click to trace</span>',
+        sev: 'info',
+        hostnames: p,
+        pathToggle: { id: `added-${i}`, sequence: p, kind: 'added' },
+      }));
+    });
+    sb.appendChild(s);
+  }
+
+  if (delta.edges.added.length) {
+    const s = section('Edges added', 'info', delta.edges.added.length);
+    for (const e of delta.edges.added) {
+      s.appendChild(entry({
+        primaryHTML: `<span class="diff-added">${esc(e.from)} → ${esc(e.to)}</span>`,
+        detailHTML: `via ${esc(e.egress_interface||'—')} (nh ${esc(e.next_hop_ip||'—')})`,
+        sev: 'info',
+        hostnames: [e.from, e.to],
+      }));
+    }
+    sb.appendChild(s);
+  }
+
+  if (infoMods.length) {
+    const s = section('Informational', 'info', infoMods.length);
+    for (const m of infoMods) {
+      const changeLines = m.changes.map(c => {
+        if ('from' in c) return `${esc(c.field)}: ${esc(c.from)} → ${esc(c.to)}`;
+        return `${esc(c.field)}: -{${esc((c.removed||[]).join(', '))}} +{${esc((c.added||[]).join(', '))}}`;
+      }).join('<br>');
+      s.appendChild(entry({
+        primaryHTML: esc(m.hostname),
+        detailHTML: changeLines,
+        sev: 'info',
+        hostnames: [m.hostname],
+      }));
+    }
+    sb.appendChild(s);
+  }
+
+  // Subscribe the sidebar to HoverBus so entries mentioning a hovered
+  // hostname get the .hovered class applied.
+  HoverBus.subscribe((highlighted) => {
+    sb.querySelectorAll('.delta-entry').forEach(el => {
+      const names = (el.dataset.hostnames || '').split(',').filter(Boolean);
+      const match = names.some(n => highlighted.has(n));
+      el.classList.toggle('hovered', match);
+    });
+  });
+}
+
+// ══════════════════════════════════════════════════════════
+// Verdict banner
+// ══════════════════════════════════════════════════════════
+
+function renderVerdictBar(delta) {
+  const bar = document.getElementById('verdictBar');
+  const imp = delta.impairment;
+  const fmtPct = v => v === null || v === undefined ? 'n/a'
+    : (v >= 0 ? '+' : '') + (v * 100).toFixed(0) + '%';
+
+  function chipClass(p, direction) {
+    if (p === null || p === undefined) return 'neutral';
+    if (Math.abs(p) < 0.005) return 'neutral';
+    if (direction === 'down-bad') return p < 0 ? 'bad' : 'good';
+    if (direction === 'up-bad')   return p > 0 ? 'bad' : 'neutral';
+    return 'neutral';
+  }
+
+  const level = delta.verdict.level;
+  const reasons = delta.verdict.reasons.join(', ') || 'no changes detected';
+
+  bar.innerHTML = `
+    <span class="verdict-badge verdict-${level}">${level}</span>
+    <span class="verdict-reasons">${reasons}</span>
+    <span class="impairment-chip ${chipClass(imp.paths_pct, 'down-bad')}">paths ${fmtPct(imp.paths_pct)}</span>
+    <span class="impairment-chip ${chipClass(imp.edges_pct, 'down-bad')}">edges ${fmtPct(imp.edges_pct)}</span>
+    <span class="impairment-chip ${chipClass(imp.ecmp_width_pct, 'down-bad')}">ecmp-width ${fmtPct(imp.ecmp_width_pct)}</span>
+    <span class="impairment-chip ${chipClass(imp.churn_pct, 'up-bad')}">churn ${fmtPct(imp.churn_pct)}</span>
+  `;
+}
+
+// ══════════════════════════════════════════════════════════
+// Landing / file load wiring
+// ══════════════════════════════════════════════════════════
+
+const state = {
+  a: null, b: null,
+  filenameA: null, filenameB: null,
+  rendererA: null, rendererB: null,
+};
+
+function setSlot(slot, filename, data, meta) {
+  const zone = document.getElementById('drop' + slot);
+  const fnEl = document.getElementById('filename' + slot);
+  const metaEl = document.getElementById('meta' + slot);
+  if (slot === 'A') { state.a = data; state.filenameA = filename; }
+  else              { state.b = data; state.filenameB = filename; }
+  zone.classList.add('loaded');
+  fnEl.textContent = filename;
+  metaEl.textContent = meta;
+  updateComputeButton();
+}
+
+function updateComputeButton() {
+  document.getElementById('computeBtn').disabled = !(state.a && state.b);
+}
+
+function showLandingError(msg) {
+  document.getElementById('landingError').textContent = msg || '';
+}
+
+async function loadFile(file, slot) {
+  try {
+    const text = await file.text();
+    const raw = JSON.parse(text);
+    const g = normalizeGraph(raw);
+    const nCount = Object.keys(g.nodes).length;
+    const eCount = g.edges.length;
+    const pCount = (g.meta.paths || []).length;
+    const meta = `${g.meta.target_prefix || '?'} · ${nCount} devices · ${eCount} edges · ${pCount} paths`;
+    setSlot(slot, file.name, g, meta);
+    showLandingError('');
+  } catch (err) {
+    showLandingError(`${file.name}: ${err.message}`);
+  }
+}
+
+function wireDropZone(slot) {
+  const zone = document.getElementById('drop' + slot);
+  const input = document.getElementById('fileInput' + slot);
+  zone.addEventListener('click', () => input.click());
+  input.addEventListener('change', e => {
+    if (e.target.files[0]) loadFile(e.target.files[0], slot);
+  });
+  zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('dragover'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('dragover');
+    const f = e.dataTransfer.files[0];
+    if (f) loadFile(f, slot);
+  });
+}
+wireDropZone('A'); wireDropZone('B');
+
+document.getElementById('swapBtn').addEventListener('click', () => {
+  [state.a, state.b] = [state.b, state.a];
+  [state.filenameA, state.filenameB] = [state.filenameB, state.filenameA];
+  // Re-render slots
+  for (const slot of ['A','B']) {
+    const data = slot === 'A' ? state.a : state.b;
+    const filename = slot === 'A' ? state.filenameA : state.filenameB;
+    const zone = document.getElementById('drop' + slot);
+    const fnEl = document.getElementById('filename' + slot);
+    const metaEl = document.getElementById('meta' + slot);
+    if (data) {
+      zone.classList.add('loaded');
+      fnEl.textContent = filename;
+      const nCount = Object.keys(data.nodes).length;
+      const eCount = data.edges.length;
+      const pCount = (data.meta.paths || []).length;
+      metaEl.textContent = `${data.meta.target_prefix || '?'} · ${nCount} devices · ${eCount} edges · ${pCount} paths`;
+    } else {
+      zone.classList.remove('loaded');
+      fnEl.textContent = ''; metaEl.textContent = '';
+    }
+  }
+});
+
+document.getElementById('computeBtn').addEventListener('click', () => {
+  if (!state.a || !state.b) return;
+  try {
+    const delta = diffGraphs(state.a, state.b);
+    state.delta = delta;
+    showDiffView(delta);
+  } catch (err) {
+    showLandingError(`diff error: ${err.message}`);
+  }
+});
+
+document.getElementById('resetBtn').addEventListener('click', () => {
+  document.getElementById('diffView').style.display = 'none';
+  document.getElementById('landing').style.display = 'flex';
+  document.getElementById('resetBtn').style.display = 'none';
+  document.getElementById('exportBtn').style.display = 'none';
+  document.getElementById('headerMeta').textContent = '';
+});
+
+document.getElementById('exportBtn').addEventListener('click', () => {
+  if (!state.delta) return;
+  const blob = new Blob([JSON.stringify(state.delta, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'fibtrace-diff.json';
+  a.click();
+  URL.revokeObjectURL(url);
+});
+
+// Pane control buttons
+document.querySelectorAll('.ctrl-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const p = btn.dataset.pane, a = btn.dataset.action;
+    const r = p === 'A' ? state.rendererA : state.rendererB;
+    if (!r) return;
+    if (a === 'fit') r.fit();
+    else if (a === 'zoomin') r.zoom(1.15);
+    else if (a === 'zoomout') r.zoom(0.85);
+  });
+});
+
+function showDiffView(delta) {
+  document.getElementById('landing').style.display = 'none';
+  document.getElementById('diffView').style.display = 'block';
+  document.getElementById('resetBtn').style.display = 'inline-block';
+  document.getElementById('exportBtn').style.display = 'inline-block';
+  document.getElementById('headerMeta').textContent =
+    `${state.filenameA}  →  ${state.filenameB}`;
+  document.getElementById('paneFilenameA').textContent = state.filenameA;
+  document.getElementById('paneFilenameB').textContent = state.filenameB;
+
+  renderVerdictBar(delta);
+
+  // Reset cross-pane interaction state from any prior diff
+  HoverBus.reset();
+  PathOverlay.reset();
+
+  const { A: annoA, B: annoB } = buildAnnotations(delta);
+  state.rendererA = new GraphRenderer('svgA', 'A');
+  state.rendererB = new GraphRenderer('svgB', 'B');
+  // Both renderers subscribe to HoverBus — hovering in either pane or the
+  // sidebar lights up matching nodes here.
+  HoverBus.subscribe(set => state.rendererA.setHoveredHostnames(set));
+  HoverBus.subscribe(set => state.rendererB.setHoveredHostnames(set));
+  // Give the SVGs a moment to size up before layout picks up getBoundingClientRect
+  requestAnimationFrame(() => {
+    state.rendererA.setData(state.a, annoA);
+    state.rendererB.setData(state.b, annoB);
+    renderDeltaSidebar(delta, state.rendererA, state.rendererB);
+  });
+}
+
+window.addEventListener('resize', () => {
+  if (state.rendererA) state.rendererA.fit();
+  if (state.rendererB) state.rendererB.fit();
+});
+</script>
+</body>
+</html>
