@@ -4,7 +4,7 @@ Hop-by-hop forwarding chain validation from the device perspective. Not a tracer
 
 > **⚠️ Alpha software.** fibtrace is under active development. Interfaces, output schemas, and CLI flags may change between 0.x releases. Not recommended for unattended automation or mission-critical change gates until a 1.0 release establishes API stability. See [Status & Security](#status--security).
 
-![fibtrace demo](screenshots/slides.gif)
+![fibtrace demo](https://raw.githubusercontent.com/scottpeterman/fibtrace/refs/heads/main/screenshots/slides.gif)
 
 ## The Problem
 
