@@ -56,9 +56,21 @@ logger = logging.getLogger("fibtrace-web")
 # ════════════════════════════════════════
 
 _PACKAGE_DIR = Path(__file__).parent
+_STATIC_DIR = _PACKAGE_DIR / "static"
+
+# Wheels and sdists don't preserve empty directories, so _STATIC_DIR may be
+# absent on a pip-installed copy even though it exists in the source tree.
+# Static assets are CDN-served today (xterm.js, fonts) so the directory is
+# mainly a hook for future local assets — best-effort create, skip mount if
+# the filesystem is read-only (some container / system-package installs).
+try:
+    _STATIC_DIR.mkdir(exist_ok=True)
+except OSError:
+    pass
 
 app = FastAPI(title="fibtrace-web", docs_url=None, redoc_url=None)
-app.mount("/static", StaticFiles(directory=_PACKAGE_DIR / "static"), name="static")
+if _STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=_PACKAGE_DIR / "templates")
 serializer = URLSafeTimedSerializer(SECRET_KEY)
 
@@ -126,7 +138,7 @@ async def login_page(request: Request):
     session = get_session(request)
     if session:
         return RedirectResponse("/", status_code=302)
-    return templates.TemplateResponse("login.html", {"request": request, "error": None})
+    return templates.TemplateResponse(request, "login.html", {"error": None})
 
 
 @app.post("/login")
@@ -145,8 +157,9 @@ async def login_submit(
         return response
 
     return templates.TemplateResponse(
+        request,
         "login.html",
-        {"request": request, "error": "Invalid credentials"},
+        {"error": "Invalid credentials"},
         status_code=401,
     )
 
@@ -167,8 +180,7 @@ async def dashboard(request: Request):
     session = get_session(request)
     if not session:
         return RedirectResponse("/login", status_code=302)
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "dashboard.html", {
         "username": session["user"],
     })
 
@@ -187,8 +199,7 @@ async def graph_viewer(request: Request, trace_id: str):
     if not trace or not trace.graph_json:
         raise HTTPException(404, "Graph not found")
 
-    return templates.TemplateResponse("graph.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "graph.html", {
         "trace_id": trace_id,
         "graph_json": json.dumps(trace.graph_json),
     })
@@ -200,7 +211,7 @@ async def standalone_viewer(request: Request):
     session = get_session(request)
     if not session:
         return RedirectResponse("/login", status_code=302)
-    return templates.TemplateResponse("viewer.html", {"request": request})
+    return templates.TemplateResponse(request, "viewer.html")
 
 
 @app.get("/diff", response_class=HTMLResponse)
@@ -210,7 +221,7 @@ async def diff_viewer(request: Request):
     session = get_session(request)
     if not session:
         return RedirectResponse("/login", status_code=302)
-    return templates.TemplateResponse("diff_viewer.html", {"request": request})
+    return templates.TemplateResponse(request, "diff_viewer.html")
 
 
 @app.get("/api/graph/{trace_id}")
