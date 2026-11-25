@@ -10,8 +10,8 @@ This is the deep-dive reference for the web dashboard. See the main [README.md](
 # Install with the [web] extra
 pip install 'fibtrace[web]'
 
-# Run with default settings (admin/fibtrace)
-fibtrace web --host 0.0.0.0 --port 8100
+# Run locally with the built-in admin/fibtrace login (loopback only)
+fibtrace web --port 8100
 
 # Open http://localhost:8100
 ```
@@ -31,15 +31,19 @@ All configuration via environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `FIBTRACE_SECRET_KEY` | (random) | Session signing key. Set explicitly for persistence across restarts. |
-| `FIBTRACE_USERS` | `{"admin":"fibtrace"}` | JSON dict of username→password pairs. |
+| `FIBTRACE_USERS` | `{"admin":"fibtrace"}` | JSON dict of username → scrypt hash (from `fibtrace web --hash-password`). Plaintext values still work but log a warning. |
+| `FIBTRACE_AUTH_CONFIG` | (unset) | YAML/JSON auth config (provider, LDAP). Same as `--auth-config`. |
 | `FIBTRACE_MODULE` | `fibtrace.walker` | Python module path for the walker CLI (used for subprocess invocation). |
 | `FIBTRACE_PYTHON` | `python` | Python interpreter path (use venv python if needed). |
 | `FIBTRACE_MAX_TRACES` | `5` | Max concurrent traces across all users. |
 
+`fibtrace web` binds 127.0.0.1 by default. It refuses any other address while the built-in admin/fibtrace login or LDAP mock mode is active.
+
 ### Example: Custom Users
 
 ```bash
-export FIBTRACE_USERS='{"scott":"hunter2","ops":"readonly"}'
+fibtrace web --hash-password
+export FIBTRACE_USERS='{"scott":"scrypt$16384$8$1$...","ops":"scrypt$16384$8$1$..."}'
 export FIBTRACE_SECRET_KEY='my-persistent-secret-key'
 export FIBTRACE_PYTHON='/home/scott/fibtrace/.venv/bin/python'
 fibtrace web --host 0.0.0.0 --port 8100
@@ -98,22 +102,48 @@ fibtrace/
     └── static/                # (empty — CDN for xterm.js and fonts)
 ```
 
-## Auth Backends
+## Authentication
 
-The login route delegates credential checks to a backend selected by `FIBTRACE_AUTH_BACKEND` (default `env`). Backends live in `fibtrace.web.auth`:
+Ported from netlapse. `auth.provider` selects the chain:
 
-| Backend | Env value | Status | Notes |
-|---|---|---|---|
-| `EnvUsersBackend` | `env` (default) | Implemented | Reads `FIBTRACE_USERS` JSON dict |
-| `Ldap3Backend` | `ldap3` | Stubbed | Needs `pip install 'fibtrace[ldap]'` |
-| `SshProxyBackend` | `ssh` | Stubbed | Authenticates by attempting SSH against a network device — paramiko is already a base dep |
+| Provider | Behavior |
+|---|---|
+| `local` (default) | Accounts from `FIBTRACE_USERS`. |
+| `ldap` | Directory only: service bind → locate user → bind as the user → `allowed_groups` gate. |
+| `ldap+local` | Directory first; local accounts as break-glass when the directory is down or the user isn't in it. |
 
-SSH-proxy auth is useful where the network itself is the source of truth for who should have operator access: if a user can SSH into a designated network device with their credentials, they can use the dashboard.
+LDAP needs `pip install 'fibtrace[web,ldap]'`. Example `auth.yaml`:
+
+```yaml
+auth:
+  provider: ldap+local
+  ldap:
+    servers:                        # tried in order, failover
+      - ldaps://dc1.corp.example.com
+      - ldaps://dc2.corp.example.com
+    use_ssl: true                   # or start_tls: true on 389, never both
+    validate: true
+    ca_certs_file: /etc/ssl/certs/corp-ca.pem
+    bind_dn: "CN=svc-fibtrace,OU=Service,DC=corp,DC=example,DC=com"
+    bind_password_env: FIBTRACE_LDAP_BIND_PASSWORD
+    user_search_base: "OU=Users,DC=corp,DC=example,DC=com"
+    user_filter: "(&(objectClass=user)(sAMAccountName={username}))"
+    allowed_groups: [neteng]        # CN or full DN; any-of; direct memberOf only
+```
+
+```bash
+export FIBTRACE_LDAP_BIND_PASSWORD='...'
+fibtrace web --host 0.0.0.0 --auth-config auth.yaml
+```
+
+For a demo with no directory, `mock: {enabled: true}` under `ldap` simulates one in memory (admin/admin, user/user, denied/denied). Mock mode is loopback-only.
+
+When every DC is unreachable, an `ldap+local` login falls through to local accounts after about 10 seconds (one pass over the server list plus ldap3's pool retry pause).
 
 ## Security Notes
 
-- Credentials entered in the form are sent over WebSocket to the server, which passes them as CLI arguments to the subprocess. **Run behind HTTPS in production** (nginx/caddy reverse proxy).
-- The `--password` argument will be visible in the process list (`ps aux`). For production use, consider extending fibtrace to read credentials from stdin or a file.
+- Device credentials entered in the form are sent over WebSocket to the server, which hands the password to the walker subprocess in its environment (`FIBTRACE_PASSWORD`), not on the command line. **Run behind HTTPS in production** (nginx/caddy reverse proxy).
+- Web users always supply their own SSH username and password. The server rejects a missing password or a `key_file`, and launches the walker with `--no-default-key`, so a dashboard login never reaches the server account's `~/.ssh` keys.
 - Session cookies are httponly and signed, but not encrypted. HTTPS is required for real security.
 
 ## Development

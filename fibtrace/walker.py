@@ -2637,6 +2637,8 @@ def main(argv=None):
     parser.add_argument("--key-file", default=None,
                         help="SSH private key (default: first of ~/.ssh/id_ed25519, id_ecdsa, id_rsa "
                              "when no password is given)")
+    parser.add_argument("--no-default-key", action="store_true",
+                        help="do not fall back to ~/.ssh/id_* keys (the web UI always sets this)")
 
     parser.add_argument("--max-depth", type=int, default=15)
     parser.add_argument("--timeout", type=float, default=10.0,
@@ -2691,10 +2693,12 @@ def main(argv=None):
     except (ValueError, AddressValueError) as e:
         parser.error(f"Invalid source address '{args.source}': {e}")
 
-    if not args.password and not args.key_file:
+    if not args.password and not args.key_file and not args.no_default_key:
         args.key_file = default_key_file()
         if not args.key_file:
             parser.error("no --password, $FIBTRACE_PASSWORD, --key-file, or ~/.ssh/id_* key found")
+    if not args.password and not args.key_file:
+        parser.error("no --password, $FIBTRACE_PASSWORD, or --key-file given")
 
     config = WalkerConfig(
         target_prefix=prefix_str,

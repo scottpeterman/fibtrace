@@ -107,8 +107,7 @@
     <div class="sidebar-section">
       <div class="sidebar-title">Credentials</div>
       <div class="form-row form-row-required"><label>SSH Username</label><input type="text" id="sshUser" placeholder="admin" spellcheck="false" autocomplete="off"></div>
-      <div class="form-row"><label>SSH Password</label><input type="password" id="sshPass" placeholder="••••••••" autocomplete="off"></div>
-      <div class="form-row"><label>Key File (server path)</label><input type="text" id="keyFile" placeholder="/home/user/.ssh/id_rsa" spellcheck="false"></div>
+      <div class="form-row form-row-required"><label>SSH Password</label><input type="password" id="sshPass" placeholder="••••••••" autocomplete="off"></div>
     </div>
     <div class="sidebar-section">
       <div class="sidebar-title">Options</div>
@@ -200,10 +199,10 @@ function startTrace() {
   const prefix=document.getElementById('prefix').value.trim();
   const source=document.getElementById('source').value.trim();
   const sshUser=document.getElementById('sshUser').value.trim();
-  if (!prefix||!source||!sshUser) { term.writeln('\x1b[38;2;255;68;102m  ✗ Prefix, Source, and SSH Username are required.\x1b[0m'); return; }
+  const sshPass=document.getElementById('sshPass').value;
+  if (!prefix||!source||!sshUser||!sshPass) { term.writeln('\x1b[38;2;255;68;102m  ✗ Prefix, Source, SSH Username, and SSH Password are required.\x1b[0m'); return; }
   const params = { prefix, source, username:sshUser,
-    password:document.getElementById('sshPass').value,
-    key_file:document.getElementById('keyFile').value.trim()||null,
+    password:sshPass,
     nh_source:document.getElementById('nhSource').value,
     domain:document.getElementById('domain').value.trim()||null,
     verbose:document.getElementById('verbose').checked,

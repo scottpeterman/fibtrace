@@ -376,9 +376,9 @@ It is **not** appropriate for:
 - Shared-tenant environments where password hygiene matters
 - Any deployment where a compromised dashboard credential gives access to production network devices — which is every real deployment, because the dashboard prompts for SSH credentials that the walker then uses directly
 
-The `fibtrace.web.auth` module stubs `Ldap3Backend` and `SshProxyBackend` for future wiring; until those land, treat dashboard auth as a thin speed-bump, not a security boundary.
+Dashboard auth supports scrypt-hashed local accounts and LDAP/Active Directory (`ldap` or `ldap+local` with break-glass), gated on directory group membership. See [README_WEB.md](README_WEB.md#authentication). The dashboard binds 127.0.0.1 by default.
 
-**Credential handling in live traces.** The walker receives SSH credentials as command-line arguments to the subprocess, which means they are visible to anyone with shell access on the web host (via `ps aux`, `/proc/<pid>/cmdline`). The web app does not persist credentials, but the subprocess exposure is real. Stdin-based credential passing is on the roadmap; until then, either run the web host with restricted shell access or use the CLI directly where this exposure is also present but under the operator's direct control.
+**Credential handling in live traces.** The web app hands the device password to the walker subprocess in its environment (`FIBTRACE_PASSWORD`), not its command line, so it does not show in `ps`. On the CLI, prefer `FIBTRACE_PASSWORD` or key auth over `--password`.
 
 **HTTPS.** The built-in FastAPI/uvicorn server supports direct SSL via uvicorn's `--ssl-keyfile` / `--ssl-certfile` flags (drop to `uvicorn fibtrace.web.app:app ...` to use them today, or wait for these flags to be exposed through `fibtrace web` in a later release). For production, a proper reverse proxy (nginx, caddy) handles TLS better — cert rotation without restart, HTTP/2, OCSP stapling.
 
@@ -392,8 +392,8 @@ The core walk engine, forwarding graph, TUI, and web dashboard are proven across
 - **NX-OS IPv6 parsers** — v6 command templates are in place; ND and ARP-by-MAC parsers needed for NX-OS.
 - **MPLS label path tracing** — Models include label stacks and LFIB lookups. Parsers and walker integration needed.
 - **VXLAN/overlay tracing** — Follow the overlay, then validate the underlay for each VTEP-to-VTEP segment.
-- **Web auth backends** — The `fibtrace.web.auth` module stubs LDAP3 and SSH-proxy backends (authenticate against a network device). Wire them up and expose via `FIBTRACE_AUTH_BACKEND`.
+- **SSH-proxy web auth** — Authenticate dashboard users by attempting SSH against a designated network device.
 
 ## License
 
-MIT
+GPLv3

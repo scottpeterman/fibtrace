@@ -31,6 +31,9 @@ from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
+from starlette.concurrency import run_in_threadpool
+
+from .auth import AuthManager, load_auth_config
 
 # ════════════════════════════════════════
 # Configuration
@@ -42,12 +45,9 @@ FIBTRACE_MODULE = os.environ.get("FIBTRACE_MODULE", "fibtrace.walker")
 FIBTRACE_PYTHON = os.environ.get("FIBTRACE_PYTHON", "python")
 MAX_CONCURRENT_TRACES = int(os.environ.get("FIBTRACE_MAX_TRACES", "5"))
 
-# Simple user store — override via environment or replace with your own auth.
-# Format: FIBTRACE_USERS='{"admin":"changeme","scott":"hunter2"}'
-_default_users = '{"admin": "fibtrace"}'
-USERS: dict[str, str] = json.loads(
-    os.environ.get("FIBTRACE_USERS", _default_users)
-)
+# Auth provider chain (local / ldap / ldap+local) - see fibtrace/web/auth.py.
+# FIBTRACE_AUTH_CONFIG names the YAML/JSON config; FIBTRACE_USERS holds local users.
+AUTH = AuthManager(load_auth_config())
 
 logger = logging.getLogger("fibtrace-web")
 
@@ -147,8 +147,10 @@ async def login_submit(
     username: str = Form(...),
     password: str = Form(...),
 ):
-    if username in USERS and USERS[username] == password:
-        token = create_session(username)
+    # LDAP binds block; keep them off the event loop that streams live traces
+    result = await run_in_threadpool(AUTH.authenticate, username, password)
+    if result.ok:
+        token = create_session(result.user["username"])
         response = RedirectResponse("/", status_code=302)
         response.set_cookie(
             "fibtrace_session", token,
@@ -277,6 +279,19 @@ async def ws_trace(websocket: WebSocket):
             })
             return
 
+        # Web users always bring their own device credentials. The walker runs as
+        # the server's OS user, so a server-side key path or the default ~/.ssh key
+        # would hand every dashboard user the operator's own access.
+        if not params.get("username") or not params.get("password"):
+            await websocket.send_json({"type": "error",
+                                       "data": "SSH username and password are required"})
+            return
+        if params.get("key_file"):
+            await websocket.send_json({"type": "error",
+                                       "data": "key_file is not accepted from the web UI; "
+                                               "enter your own SSH password"})
+            return
+
         # Build command
         trace_id = uuid.uuid4().hex[:12]
         graph_path = os.path.join(tempfile.gettempdir(), f"fibtrace_{trace_id}.graph.json")
@@ -293,8 +308,6 @@ async def ws_trace(websocket: WebSocket):
         child_env.pop("FIBTRACE_PASSWORD", None)
         if params.get("password"):
             child_env["FIBTRACE_PASSWORD"] = params["password"]
-        if params.get("key_file"):
-            cmd += ["--key-file", params["key_file"]]
         if params.get("max_depth"):
             cmd += ["--max-depth", str(params["max_depth"])]
         if params.get("timeout"):
@@ -315,6 +328,9 @@ async def ws_trace(websocket: WebSocket):
             cmd.append("--debug")
         if params.get("no_probe_target"):
             cmd.append("--no-probe-target")
+
+        # Never fall back to the server user's ~/.ssh keys
+        cmd.append("--no-default-key")
 
         # Always capture JSON + graph for the viewer
         cmd.append("--json")
