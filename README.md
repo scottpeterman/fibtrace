@@ -31,15 +31,17 @@ Then it follows the next-hop to the next device and repeats. The walk continues 
 
 ## Quick Start
 
+On PyPI the package is **`fibtrace2`**. The command it installs and the Python package you import are both still `fibtrace`.
+
 ```bash
 # Core CLI only — walk, diff, view
-pip install fibtrace
+pip install fibtrace2
 
 # With optional UIs
-pip install 'fibtrace[tui]'        # + Textual TUI
-pip install 'fibtrace[web]'        # + FastAPI web dashboard
-pip install 'fibtrace[tui,web]'    # both UIs
-pip install 'fibtrace[web,ldap]'   # web dashboard with LDAP/AD login
+pip install 'fibtrace2[tui]'        # + Textual TUI
+pip install 'fibtrace2[web]'        # + FastAPI web dashboard
+pip install 'fibtrace2[tui,web]'    # both UIs
+pip install 'fibtrace2[web,ldap]'   # web dashboard with LDAP/AD login
 
 # Headless walk (key auth: ~/.ssh/id_ed25519, id_ecdsa or id_rsa)
 fibtrace walk -p 10.1.0.0/24 -s 172.16.1.1 -u admin --domain example.com
@@ -147,7 +149,7 @@ Both sources are always collected and recorded in the graph nodes (`route_summar
 fibtrace also runs as a terminal application with a split-pane layout: a forwarding tree on the left and a live log on the right. Devices appear in the tree as they're discovered, with a spinner while probing and a verdict icon when complete. ECMP branches fork visually as sibling nodes.
 
 ```bash
-# Requires the [tui] extra: pip install 'fibtrace[tui]'
+# Requires the [tui] extra: pip install 'fibtrace2[tui]'
 
 # Live trace
 fibtrace tui -p 10.0.0.0/24 -s 172.16.1.1 -u admin
@@ -171,7 +173,7 @@ The status bar shows completion state, device count, ECMP branches, elapsed time
 fibtrace also ships a browser-based dashboard — FastAPI + WebSocket-streamed terminal output, interactive graph viewer, side-by-side diff viewer. Drop two graph JSONs onto the `/diff` page to see path impairment, edge deltas, and ECMP-width changes rendered as dual graphs.
 
 ```bash
-# Requires the [web] extra: pip install 'fibtrace[web]'
+# Requires the [web] extra: pip install 'fibtrace2[web]'
 
 # Local use: binds 127.0.0.1, built-in admin / fibtrace login
 fibtrace web --port 8100
@@ -182,7 +184,7 @@ export FIBTRACE_USERS='{"scott": "scrypt$16384$8$1$..."}'
 fibtrace web --host 0.0.0.0 --port 8100
 ```
 
-Dashboard users enter their own SSH username and password for every trace; the server never lends them its own keys. See [Status & Security](#status--security).
+Dashboard users supply their own SSH credentials for every trace: a password, or their own private key pasted or loaded in the browser. The server never lends them its own keys. See [Status & Security](#status--security).
 
 The subprocess model means the web app doesn't import fibtrace internals — each trace runs as a child `python -m fibtrace.walker` process. That keeps the web layer isolated from walker changes and lets multiple concurrent users run traces without sharing state. See [README_WEB.md](README_WEB.md) for deployment details, environment variables, and architecture notes.
 
@@ -251,6 +253,11 @@ Authentication (first match wins):
                         id_rsa when no password is given)
   --no-default-key      Never fall back to ~/.ssh keys
 
+Environment:
+  FIBTRACE_PASSWORD     SSH password
+  FIBTRACE_KEY_DATA     PEM private key held in memory (used by the web UI)
+  FIBTRACE_KEY_PASSPHRASE  Passphrase for an encrypted key
+
 Walk Options:
   --max-depth           Maximum hop depth (default: 15)
   --timeout             Per-command timeout in seconds (default: 10.0)
@@ -277,14 +284,14 @@ fibtrace uses optional extras to keep the base install small. The walker, diff, 
 
 | Install command | Includes |
 |---|---|
-| `pip install fibtrace` | `walk`, `diff`, `view` — the headless core |
-| `pip install 'fibtrace[tui]'` | + Textual TUI (adds `textual`, `rich`) |
-| `pip install 'fibtrace[web]'` | + FastAPI web dashboard (adds `fastapi`, `uvicorn`, `jinja2`, `itsdangerous`, `websockets`, `python-multipart`) |
-| `pip install 'fibtrace[tui,web]'` | Both UIs |
-| `pip install 'fibtrace[web,ldap]'` | + LDAP/Active Directory login for the dashboard (adds `ldap3`, `PyYAML`) |
-| `pip install 'fibtrace[dev]'` | All of the above + `pytest`, `build`, `twine` |
+| `pip install fibtrace2` | `walk`, `diff`, `view` — the headless core |
+| `pip install 'fibtrace2[tui]'` | + Textual TUI (adds `textual`, `rich`) |
+| `pip install 'fibtrace2[web]'` | + FastAPI web dashboard (adds `fastapi`, `uvicorn`, `jinja2`, `itsdangerous`, `websockets`, `python-multipart`) |
+| `pip install 'fibtrace2[tui,web]'` | Both UIs |
+| `pip install 'fibtrace2[web,ldap]'` | + LDAP/Active Directory login for the dashboard (adds `ldap3`, `PyYAML`) |
+| `pip install 'fibtrace2[dev]'` | All of the above + `pytest`, `build`, `twine` |
 
-Requires Python 3.9 or newer.
+Requires Python 3.9 or newer. Uninstall any older `fibtrace` distribution first (`pip uninstall fibtrace`); it installs the same `fibtrace` package and command.
 
 ## Architecture
 
@@ -397,11 +404,11 @@ fibtrace only runs `show` commands plus the session pager setting (`terminal len
 
 ### Web dashboard
 
-- **Binds 127.0.0.1 by default.** `fibtrace web` refuses to bind any other address while the built-in `admin`/`fibtrace` login or LDAP mock mode is active.
+- **Binds 127.0.0.1 by default.** `fibtrace web` refuses to bind any other address while the built-in `admin`/`fibtrace` login or LDAP mock mode is active. The app enforces this as well: those logins only work when `fibtrace web` itself confirmed a loopback bind, so starting the app another way (uvicorn directly, behind a proxy) disables them.
 - **Login providers.** `local` accounts come from `FIBTRACE_USERS` as scrypt hashes (`fibtrace web --hash-password`); plaintext values still work but log a warning. `ldap` authenticates against Active Directory or any LDAP server and requires membership in an `allowed_groups` group. `ldap+local` tries the directory first and falls back to local break-glass accounts when it is unreachable. Configuration is in [README_WEB.md](README_WEB.md#authentication).
 - **Directory transport.** LDAPS or StartTLS, with certificate validation on by default. A failed StartTLS never falls back to a cleartext bind. A cleartext configuration starts, but logs a warning on every start.
 - **No roles.** Anyone who can log in can run traces from the server. Restrict who that is with `allowed_groups` or the local account list.
-- **Users bring their own device credentials.** Every trace needs the user's own SSH username and password. The server rejects a trace without a password or with a key file path, and launches the walker with `--no-default-key`, so a dashboard login never reaches the server account's SSH keys. The password goes to the walker subprocess through its environment, not its command line, and is not stored.
+- **Users bring their own device credentials.** Every trace needs the user's own SSH username plus either a password or their own private key, pasted or loaded from a file in the browser, with an optional passphrase. The server rejects a server-side key file path and launches the walker with `--no-default-key`, so a dashboard login never reaches the server account's SSH keys. Password, key and passphrase go to the walker subprocess through its environment (`FIBTRACE_PASSWORD`, `FIBTRACE_KEY_DATA`, `FIBTRACE_KEY_PASSPHRASE`). They never go on its command line or to disk, and are not stored.
 - **Sessions** are signed, httponly cookies valid for 24 hours. Set `FIBTRACE_SECRET_KEY`; without it a random key is generated at each start, and a restart logs everyone out.
 - **HTTPS.** Logins and device passwords cross the wire in the clear without it. Put a reverse proxy (nginx, caddy) in front for TLS, or run `uvicorn fibtrace.web.app:app` directly with its `--ssl-keyfile` and `--ssl-certfile` flags.
 

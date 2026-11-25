@@ -52,6 +52,14 @@
   .form-row select option { background: var(--bg-card); color: var(--text-primary); }
   .form-row-inline { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
   .form-row-required label::after { content: ' *'; color: var(--accent-red); font-size: 10px; }
+  .key-drop { padding: 12px 10px; background: var(--bg-card); border: 1px dashed var(--border-subtle); border-radius: 6px; color: var(--text-muted); font-size: 11px; text-align: center; cursor: text; outline: none; }
+  .key-drop:focus, .key-drop.drag { border-color: var(--accent-blue); color: var(--text-secondary); }
+  .key-drop.loaded { border-style: solid; border-color: var(--accent-green, #00e88f); color: var(--text-primary); font-family: 'JetBrains Mono', monospace; }
+  .auth-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 12px; }
+  .auth-toggle button { padding: 6px 0; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 6px; color: var(--text-secondary); font-size: 11px; cursor: pointer; }
+  .auth-toggle button.active { border-color: var(--accent-blue); color: var(--accent-blue); }
+  .key-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; font-size: 10px; color: var(--text-muted); }
+  .key-actions button { background: none; border: none; color: var(--accent-blue); font-size: 11px; cursor: pointer; padding: 0; }
   .form-check { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
   .form-check input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent-blue); cursor: pointer; }
   .form-check label { font-size: 12px; color: var(--text-secondary); cursor: pointer; margin-bottom: 0; }
@@ -107,7 +115,21 @@
     <div class="sidebar-section">
       <div class="sidebar-title">Credentials</div>
       <div class="form-row form-row-required"><label>SSH Username</label><input type="text" id="sshUser" placeholder="admin" spellcheck="false" autocomplete="off"></div>
-      <div class="form-row form-row-required"><label>SSH Password</label><input type="password" id="sshPass" placeholder="••••••••" autocomplete="off"></div>
+      <div class="auth-toggle">
+        <button type="button" id="authPassBtn" class="active" onclick="setAuthMode('password')">Password</button>
+        <button type="button" id="authKeyBtn" onclick="setAuthMode('key')">Private key</button>
+      </div>
+      <div id="authPassword">
+        <div class="form-row form-row-required"><label>SSH Password</label><input type="password" id="sshPass" placeholder="••••••••" autocomplete="off"></div>
+      </div>
+      <div id="authKey" style="display:none">
+        <div class="form-row form-row-required"><label>Private Key</label>
+          <div id="keyDrop" class="key-drop" tabindex="0">Click here and paste (Ctrl+V), or drop a key file</div>
+          <div class="key-actions"><button type="button" id="keyClear" style="display:none" onclick="clearKey()">Clear</button><span></span><button type="button" onclick="document.getElementById('keyFileInput').click()">Load file…</button></div>
+          <input type="file" id="keyFileInput" style="display:none" onchange="loadKeyFile(this)">
+        </div>
+        <div class="form-row"><label>Key Passphrase</label><input type="password" id="sshKeyPass" placeholder="(if the key is encrypted)" autocomplete="off"></div>
+      </div>
     </div>
     <div class="sidebar-section">
       <div class="sidebar-title">Options</div>
@@ -195,14 +217,75 @@ function richToAnsi(t) {
   }).replace(/\[bold\]/g,'\x1b[1m').replace(/\[\/\]/g,'\x1b[0m').replace(/\[\/bold\]/g,'\x1b[22m');
 }
 
+let authMode = 'password';
+function setAuthMode(mode) {
+  authMode = mode;
+  document.getElementById('authPassword').style.display = mode === 'password' ? '' : 'none';
+  document.getElementById('authKey').style.display = mode === 'key' ? '' : 'none';
+  document.getElementById('authPassBtn').classList.toggle('active', mode === 'password');
+  document.getElementById('authKeyBtn').classList.toggle('active', mode === 'key');
+}
+// The key lives only in this variable: never written into the page, never shown.
+// It is read in the browser and sent with the trace request; nothing is uploaded to a path.
+let sshKeyData = '';
+function keyType(t) {
+  const m = t.match(/-----BEGIN ([A-Z0-9 ]*)PRIVATE KEY-----/);
+  if (!m) return null;
+  const kind = m[1].trim();
+  return kind === 'OPENSSH' ? 'OpenSSH' : (kind || 'PKCS#8');
+}
+function setKey(text, source) {
+  const drop = document.getElementById('keyDrop');
+  text = (text || '').trim();
+  const kind = keyType(text);
+  if (!kind) {
+    term.writeln('\x1b[38;2;255;68;102m  ✗ That is not a private key (expected a -----BEGIN ... PRIVATE KEY----- block).\x1b[0m');
+    return;
+  }
+  if (text.length > 16384) {
+    term.writeln('\x1b[38;2;255;68;102m  ✗ That is too large to be a private key.\x1b[0m');
+    return;
+  }
+  sshKeyData = text + '\n';
+  drop.textContent = `${kind} key loaded${source ? ' from ' + source : ''} · ${text.length} chars`;
+  drop.classList.add('loaded');
+  document.getElementById('keyClear').style.display = '';
+}
+function clearKey() {
+  sshKeyData = '';
+  const drop = document.getElementById('keyDrop');
+  drop.textContent = 'Click here and paste (Ctrl+V), or drop a key file';
+  drop.classList.remove('loaded');
+  document.getElementById('keyClear').style.display = 'none';
+}
+function readKeyFile(f) {
+  if (!f) return;
+  if (f.size > 16384) { term.writeln('\x1b[38;2;255;68;102m  ✗ That file is too large to be a private key.\x1b[0m'); return; }
+  const r = new FileReader();
+  r.onload = () => setKey(r.result, f.name);
+  r.readAsText(f);
+}
+function loadKeyFile(input) { readKeyFile(input.files && input.files[0]); input.value = ''; }
+(function wireKeyDrop() {
+  const drop = document.getElementById('keyDrop');
+  drop.addEventListener('paste', e => { e.preventDefault(); setKey(e.clipboardData.getData('text'), null); });
+  drop.addEventListener('keydown', e => { if (!(e.ctrlKey || e.metaKey) && e.key.length === 1) e.preventDefault(); });
+  drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('drag'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
+  drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('drag'); readKeyFile(e.dataTransfer.files[0]); });
+})();
+
 function startTrace() {
   const prefix=document.getElementById('prefix').value.trim();
   const source=document.getElementById('source').value.trim();
   const sshUser=document.getElementById('sshUser').value.trim();
-  const sshPass=document.getElementById('sshPass').value;
-  if (!prefix||!source||!sshUser||!sshPass) { term.writeln('\x1b[38;2;255;68;102m  ✗ Prefix, Source, SSH Username, and SSH Password are required.\x1b[0m'); return; }
+  const sshPass=authMode==='password'?document.getElementById('sshPass').value:'';
+  const sshKey=authMode==='key'?sshKeyData:'';
+  if (!prefix||!source||!sshUser||!(sshPass||sshKey)) { term.writeln(`\x1b[38;2;255;68;102m  ✗ Prefix, Source, SSH Username, and ${authMode==='key'?'a private key':'SSH Password'} are required.\x1b[0m`); return; }
   const params = { prefix, source, username:sshUser,
-    password:sshPass,
+    password:sshPass||null,
+    key_data:sshKey||null,
+    key_passphrase:sshKey?(document.getElementById('sshKeyPass').value||null):null,
     nh_source:document.getElementById('nhSource').value,
     domain:document.getElementById('domain').value.trim()||null,
     verbose:document.getElementById('verbose').checked,
@@ -288,11 +371,13 @@ function saveTerminalAndView() {
   const blob = new Blob([text], {type:'text/plain'});
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  const ts = new Date().toISOString().replace(/[:.]/g,'-').substring(0,19);
-  a.download = `fibtrace_${ts}.log`;
-  a.click();
-  URL.revokeObjectURL(a.href);
+  const d = new Date(), pad = n => String(n).padStart(2,'0');
+  const ts = `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  const pfx = (document.getElementById('prefix').value.trim() || 'trace').replace(/[\/:]/g,'_');
+  a.download = `fibtrace_${pfx}_${ts}.log`;
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   // Small delay to let download start, then open graph
+  term.writeln(`\x1b[38;2;136;153;170m  Saved ${a.download} to your browser's downloads folder.\x1b[0m`);
   setTimeout(()=>{ if(graphUrl) window.open(graphUrl, '_blank'); }, 200);
 }
 

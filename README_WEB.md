@@ -8,7 +8,7 @@ This is the deep-dive reference for the web dashboard. See the main [README.md](
 
 ```bash
 # Install with the [web] extra
-pip install 'fibtrace[web]'
+pip install 'fibtrace2[web]'
 
 # Run locally with the built-in admin/fibtrace login (loopback only)
 fibtrace web --port 8100
@@ -34,10 +34,10 @@ All configuration via environment variables:
 | `FIBTRACE_USERS` | `{"admin":"fibtrace"}` | JSON dict of username → scrypt hash (from `fibtrace web --hash-password`). Plaintext values still work but log a warning. |
 | `FIBTRACE_AUTH_CONFIG` | (unset) | YAML/JSON auth config (provider, LDAP). Same as `--auth-config`. |
 | `FIBTRACE_MODULE` | `fibtrace.walker` | Python module path for the walker CLI (used for subprocess invocation). |
-| `FIBTRACE_PYTHON` | `python` | Python interpreter path (use venv python if needed). |
+| `FIBTRACE_PYTHON` | the dashboard's own interpreter | Python used to run the walker subprocess. |
 | `FIBTRACE_MAX_TRACES` | `5` | Max concurrent traces across all users. |
 
-`fibtrace web` binds 127.0.0.1 by default. It refuses any other address while the built-in admin/fibtrace login or LDAP mock mode is active.
+`fibtrace web` binds 127.0.0.1 by default. It refuses any other address while the built-in admin/fibtrace login or LDAP mock mode is active. Started any other way (uvicorn directly, behind a proxy), the app refuses those logins outright; only real accounts work.
 
 ### Example: Custom Users
 
@@ -45,7 +45,6 @@ All configuration via environment variables:
 fibtrace web --hash-password
 export FIBTRACE_USERS='{"scott":"scrypt$16384$8$1$...","ops":"scrypt$16384$8$1$..."}'
 export FIBTRACE_SECRET_KEY='my-persistent-secret-key'
-export FIBTRACE_PYTHON='/home/scott/fibtrace/.venv/bin/python'
 fibtrace web --host 0.0.0.0 --port 8100
 ```
 
@@ -112,7 +111,7 @@ Ported from netlapse. `auth.provider` selects the chain:
 | `ldap` | Directory only: service bind → locate user → bind as the user → `allowed_groups` gate. |
 | `ldap+local` | Directory first; local accounts as break-glass when the directory is down or the user isn't in it. |
 
-LDAP needs `pip install 'fibtrace[web,ldap]'`. Example `auth.yaml`:
+LDAP needs `pip install 'fibtrace2[web,ldap]'`. Example `auth.yaml`:
 
 ```yaml
 auth:
@@ -143,7 +142,7 @@ When every DC is unreachable, an `ldap+local` login falls through to local accou
 ## Security Notes
 
 - Device credentials entered in the form are sent over WebSocket to the server, which hands the password to the walker subprocess in its environment (`FIBTRACE_PASSWORD`), not on the command line. **Run behind HTTPS in production** (nginx/caddy reverse proxy).
-- Web users always supply their own SSH username and password. The server rejects a missing password or a `key_file`, and launches the walker with `--no-default-key`, so a dashboard login never reaches the server account's `~/.ssh` keys.
+- Web users always supply their own device credentials: a password, or their own private key (pasted or loaded from a file in the browser) with an optional passphrase. The server rejects a server-side `key_file` path and launches the walker with `--no-default-key`, so a dashboard login never reaches the server account's `~/.ssh` keys. The key and passphrase reach the walker through its environment, never argv or disk.
 - Session cookies are httponly and signed, but not encrypted. HTTPS is required for real security.
 
 ## Development

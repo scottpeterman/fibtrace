@@ -1,6 +1,6 @@
 """python -m fibtrace.web — run the FastAPI dashboard.
 
-Also invoked by the unified CLI as `fibtrace web`. Requires `fibtrace[web]`.
+Also invoked by the unified CLI as `fibtrace web`. Requires `fibtrace2[web]`.
 """
 from __future__ import annotations
 
@@ -68,6 +68,13 @@ def main(argv=None) -> int:
             file=sys.stderr,
         )
         return 2
+    if problem:
+        # loopback bind confirmed above; the app checks this marker before it
+        # accepts the built-in login or LDAP mock users
+        from .auth import ENV_LOOPBACK_OK
+        os.environ[ENV_LOOPBACK_OK] = "1"
+    else:
+        os.environ.pop("FIBTRACE_LOOPBACK_CONFIRMED", None)
     print(f"fibtrace web: auth {auth.describe()}", file=sys.stderr)
 
     try:
@@ -75,7 +82,7 @@ def main(argv=None) -> int:
     except ImportError:
         print(
             "fibtrace web requires the [web] extra:\n"
-            "    pip install 'fibtrace[web]'",
+            "    pip install 'fibtrace2[web]'",
             file=sys.stderr,
         )
         return 1

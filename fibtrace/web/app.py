@@ -15,6 +15,7 @@ import logging
 import os
 import secrets
 import signal
+import sys
 import tempfile
 import time
 import uuid
@@ -42,7 +43,8 @@ from .auth import AuthManager, load_auth_config
 SECRET_KEY = os.environ.get("FIBTRACE_SECRET_KEY", secrets.token_hex(32))
 SESSION_MAX_AGE = 86400  # 24 hours
 FIBTRACE_MODULE = os.environ.get("FIBTRACE_MODULE", "fibtrace.walker")
-FIBTRACE_PYTHON = os.environ.get("FIBTRACE_PYTHON", "python")
+# Default to the interpreter running the dashboard, so the walker uses the same venv
+FIBTRACE_PYTHON = os.environ.get("FIBTRACE_PYTHON", sys.executable)
 MAX_CONCURRENT_TRACES = int(os.environ.get("FIBTRACE_MAX_TRACES", "5"))
 
 # Auth provider chain (local / ldap / ldap+local) - see fibtrace/web/auth.py.
@@ -241,6 +243,26 @@ async def graph_json_api(request: Request, trace_id: str):
 # WebSocket — Trace Execution
 # ════════════════════════════════════════
 
+MAX_KEY_BYTES = 16 * 1024
+
+
+def _check_trace_credentials(params: dict) -> Optional[str]:
+    """Error text for unacceptable trace credentials, or None when they are fine."""
+    if not params.get("username"):
+        return "SSH username is required"
+    if params.get("key_file"):
+        return "key_file is not accepted from the web UI; paste or load your own private key"
+    key_data = params.get("key_data") or ""
+    if key_data:
+        if len(key_data.encode()) > MAX_KEY_BYTES:
+            return "private key is too large"
+        if "PRIVATE KEY-----" not in key_data:
+            return "that does not look like a private key (expected a -----BEGIN ... PRIVATE KEY----- block)"
+    elif not params.get("password"):
+        return "an SSH password or your own private key is required"
+    return None
+
+
 @app.websocket("/ws/trace")
 async def ws_trace(websocket: WebSocket):
     await websocket.accept()
@@ -279,17 +301,13 @@ async def ws_trace(websocket: WebSocket):
             })
             return
 
-        # Web users always bring their own device credentials. The walker runs as
-        # the server's OS user, so a server-side key path or the default ~/.ssh key
-        # would hand every dashboard user the operator's own access.
-        if not params.get("username") or not params.get("password"):
-            await websocket.send_json({"type": "error",
-                                       "data": "SSH username and password are required"})
-            return
-        if params.get("key_file"):
-            await websocket.send_json({"type": "error",
-                                       "data": "key_file is not accepted from the web UI; "
-                                               "enter your own SSH password"})
+        # Web users always bring their own device credentials: a password, or their
+        # own private key sent from the browser. The walker runs as the server's OS
+        # user, so a server-side key path or the default ~/.ssh key would hand every
+        # dashboard user the operator's own access.
+        cred_error = _check_trace_credentials(params)
+        if cred_error:
+            await websocket.send_json({"type": "error", "data": cred_error})
             return
 
         # Build command
@@ -303,11 +321,16 @@ async def ws_trace(websocket: WebSocket):
             "--username", params["username"],
         ]
 
-        # Password goes in the child's environment, not argv (argv is visible in ps)
+        # Credentials go in the child's environment, never argv (visible in ps) or disk
         child_env = dict(os.environ)
-        child_env.pop("FIBTRACE_PASSWORD", None)
+        for var in ("FIBTRACE_PASSWORD", "FIBTRACE_KEY_DATA", "FIBTRACE_KEY_PASSPHRASE"):
+            child_env.pop(var, None)
         if params.get("password"):
             child_env["FIBTRACE_PASSWORD"] = params["password"]
+        if params.get("key_data"):
+            child_env["FIBTRACE_KEY_DATA"] = params["key_data"]
+            if params.get("key_passphrase"):
+                child_env["FIBTRACE_KEY_PASSPHRASE"] = params["key_passphrase"]
         if params.get("max_depth"):
             cmd += ["--max-depth", str(params["max_depth"])]
         if params.get("timeout"):

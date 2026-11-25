@@ -50,7 +50,8 @@ def test_bad_provider_name_fails_fast():
 
 def mock_mgr(provider="ldap"):
     return AuthManager({"provider": provider, "ldap": {"mock": {"enabled": True}}},
-                       users={"breakglass": hash_password("glass-pw-1")})
+                       users={"breakglass": hash_password("glass-pw-1")},
+                       loopback_confirmed=True)
 
 
 def test_mock_directory_flow():
@@ -190,6 +191,7 @@ def test_login_route_uses_the_chain(monkeypatch, tmp_path):
     cfg = tmp_path / "auth.json"
     cfg.write_text(json.dumps({"auth": {"provider": "ldap", "ldap": {"mock": {"enabled": True}}}}))
     monkeypatch.setenv("FIBTRACE_AUTH_CONFIG", str(cfg))
+    monkeypatch.setenv("FIBTRACE_LOOPBACK_CONFIRMED", "1")
     import fibtrace.web.app as webapp
     webapp = importlib.reload(webapp)
     client = TestClient(webapp.app)
@@ -222,9 +224,11 @@ TRACE = {"prefix": "192.0.2.24/32", "source": "192.0.2.1", "username": "neteng"}
 
 
 @pytest.mark.parametrize("extra, why", [
-    ({}, "password are required"),
-    ({"password": "", "key_file": "/root/.ssh/id_ed25519"}, "password are required"),
+    ({}, "password or your own private key is required"),
+    ({"password": "", "key_file": "/root/.ssh/id_ed25519"}, "key_file is not accepted"),
     ({"password": "dev-pw", "key_file": "/root/.ssh/id_ed25519"}, "key_file is not accepted"),
+    ({"key_data": "just some text"}, "does not look like a private key"),
+    ({"key_data": "-----BEGIN OPENSSH PRIVATE KEY-----\n" + "A" * 20000}, "too large"),
 ])
 def test_web_trace_rejects_server_side_credentials(monkeypatch, extra, why):
     webapp, client = _logged_in_client(monkeypatch)
@@ -268,3 +272,90 @@ def test_walker_no_default_key_ignores_home_keys(tmp_path, monkeypatch, capsys):
     with pytest.raises(SystemExit):
         walker.main(["-p", "192.0.2.24", "-s", "192.0.2.1", "-u", "u", "--no-default-key"])
     assert "no --password" in capsys.readouterr().err
+
+
+def _openssh_key(passphrase=None):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    enc = (serialization.BestAvailableEncryption(passphrase.encode()) if passphrase
+           else serialization.NoEncryption())
+    return Ed25519PrivateKey.generate().private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.OpenSSH, enc).decode()
+
+
+def test_web_trace_passes_users_own_key_by_env(monkeypatch):
+    webapp, client = _logged_in_client(monkeypatch)
+    key = _openssh_key("kp-pass-1")
+    seen = {}
+
+    async def fake_exec(*cmd, **kw):
+        seen["cmd"], seen["env"] = list(cmd), kw.get("env") or {}
+        raise RuntimeError("stop after spawn")
+
+    monkeypatch.setattr(webapp.asyncio, "create_subprocess_exec", fake_exec)
+    with client.websocket_connect("/ws/trace") as ws:
+        ws.send_json({"type": "start_trace", "params": {**TRACE, "key_data": key,
+                                                        "key_passphrase": "kp-pass-1"}})
+        try:
+            while "cmd" not in seen:
+                ws.receive_json()
+        except Exception:
+            pass
+    assert "--no-default-key" in seen["cmd"] and "--key-file" not in seen["cmd"]
+    assert not any("PRIVATE KEY" in a or "kp-pass-1" in a for a in seen["cmd"])
+    assert seen["env"]["FIBTRACE_KEY_DATA"] == key
+    assert seen["env"]["FIBTRACE_KEY_PASSPHRASE"] == "kp-pass-1"
+    assert "FIBTRACE_PASSWORD" not in seen["env"]
+
+
+def test_walker_loads_key_from_env(monkeypatch):
+    from fibtrace import walker
+    key = _openssh_key("kp-pass-1")
+    monkeypatch.delenv("FIBTRACE_PASSWORD", raising=False)
+    monkeypatch.setenv("FIBTRACE_KEY_DATA", key)
+    monkeypatch.setenv("FIBTRACE_KEY_PASSPHRASE", "kp-pass-1")
+    captured = {}
+
+    class Stop(Exception):
+        pass
+
+    def fake_walker(config):
+        captured["config"] = config
+        raise Stop
+
+    monkeypatch.setattr(walker, "ChainWalker", fake_walker)
+    with pytest.raises(Stop):
+        walker.main(["-p", "192.0.2.24", "-s", "192.0.2.1", "-u", "u", "--no-default-key"])
+    cfg = captured["config"]
+    assert cfg.key_content == key and cfg.key_passphrase == "kp-pass-1" and cfg.key_file is None
+
+
+def test_walker_wrong_key_passphrase_fails_up_front(monkeypatch, capsys):
+    from fibtrace import walker
+    monkeypatch.delenv("FIBTRACE_PASSWORD", raising=False)
+    monkeypatch.setenv("FIBTRACE_KEY_DATA", _openssh_key("kp-pass-1"))
+    monkeypatch.setenv("FIBTRACE_KEY_PASSPHRASE", "wrong")
+    with pytest.raises(SystemExit):
+        walker.main(["-p", "192.0.2.24", "-s", "192.0.2.1", "-u", "u", "--no-default-key"])
+    assert "cannot load SSH private key" in capsys.readouterr().err
+
+
+def test_default_login_refused_unless_launcher_confirmed_loopback(monkeypatch):
+    monkeypatch.delenv("FIBTRACE_USERS", raising=False)
+    monkeypatch.delenv("FIBTRACE_LOOPBACK_CONFIRMED", raising=False)
+    r = AuthManager({}).authenticate("admin", "fibtrace")       # e.g. uvicorn started directly
+    assert not r.ok and "login disabled" in r.reason
+    monkeypatch.setenv("FIBTRACE_LOOPBACK_CONFIRMED", "1")
+    assert AuthManager({}).authenticate("admin", "fibtrace").ok
+
+
+def test_mock_ldap_refused_unless_launcher_confirmed_loopback(monkeypatch):
+    monkeypatch.delenv("FIBTRACE_LOOPBACK_CONFIRMED", raising=False)
+    mgr = AuthManager({"provider": "ldap", "ldap": {"mock": {"enabled": True}}})
+    assert "login disabled" in mgr.authenticate("admin", "admin").reason
+
+
+def test_real_accounts_work_without_the_marker(monkeypatch):
+    monkeypatch.delenv("FIBTRACE_LOOPBACK_CONFIRMED", raising=False)
+    mgr = AuthManager({}, users={"scott": hash_password("dash-pw-1")})
+    assert mgr.authenticate("scott", "dash-pw-1").ok

@@ -9,7 +9,7 @@ from importlib.metadata import version as _version, PackageNotFoundError
 from .events import HopEvent, TuiVerdict, LogLevel, VERDICT_STYLE
 
 try:
-    __version__ = _version("fibtrace")
+    __version__ = _version("fibtrace2")  # PyPI distribution name; the package is still `fibtrace`
 except PackageNotFoundError:
     # Source checkout without installed metadata.
     __version__ = "0.0.0+dev"

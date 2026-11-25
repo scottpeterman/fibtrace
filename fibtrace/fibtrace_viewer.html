@@ -999,8 +999,7 @@ function exportSVG() {
   const a = document.createElement('a');
   a.href = url;
   a.download = `fibtrace_${graphData.meta.target_prefix.replace(/\//g, '_')}.svg`;
-  a.click();
-  URL.revokeObjectURL(url);
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function exportPNG() {

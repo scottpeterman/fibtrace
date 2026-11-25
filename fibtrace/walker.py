@@ -225,6 +225,7 @@ class WalkerConfig:
     username: str = ""
     password: Optional[str] = None
     key_file: Optional[str] = None
+    key_content: Optional[str] = None      # PEM private key held in memory (web UI)
     key_passphrase: Optional[str] = None
 
     # Walk behavior
@@ -2384,6 +2385,7 @@ class ChainWalker:
                 username=self.config.username,
                 password=self.config.password,
                 key_file=self.config.key_file,
+                key_content=self.config.key_content,
                 key_passphrase=self.config.key_passphrase,
                 port=22,
                 timeout=self.config.ssh_timeout,
@@ -2606,9 +2608,7 @@ class ChainWalker:
 
 def main(argv=None):
     """
-    fibtrace --prefix 10.0.0.0/24 --source 172.16.1.1 \\
-             --username admin --password secret \\
-             --log /tmp/fibtrace.json -v
+    fibtrace walk -p 10.0.0.0/24 -s 172.16.1.1 -u admin --log /tmp/fibtrace.json -v
     """
     import argparse
     import json as json_mod
@@ -2618,10 +2618,9 @@ def main(argv=None):
         description="Walk the forwarding chain for a prefix through the network.",
         epilog=(
             "Examples:\n"
-            "  fibtrace walk -p 10.0.0.0/24 -s 172.16.1.1 -u admin --password secret\n"
-            "  fibtrace walk -p 10.0.0.0/24 -s 172.16.1.1 -u admin --password secret -v\n"
-            "  fibtrace walk -p 10.0.0.0/24 -s 172.16.1.1 -u admin --password secret "
-            "--log /tmp/ft.json\n"
+            "  fibtrace walk -p 10.0.0.0/24 -s 172.16.1.1 -u admin\n"
+            "  fibtrace walk -p 10.0.0.0/24 -s 172.16.1.1 -u admin --key-file ~/.ssh/lab_ed25519 -v\n"
+            "  FIBTRACE_PASSWORD=... fibtrace walk -p 10.0.0.0/24 -s 172.16.1.1 -u admin --log /tmp/ft.json\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -2693,19 +2692,39 @@ def main(argv=None):
     except (ValueError, AddressValueError) as e:
         parser.error(f"Invalid source address '{args.source}': {e}")
 
-    if not args.password and not args.key_file and not args.no_default_key:
+    # A private key can also arrive in the environment (the web UI sends the user's
+    # own key this way, so it never touches disk or argv)
+    key_content = os.environ.get("FIBTRACE_KEY_DATA") or None
+    key_passphrase = os.environ.get("FIBTRACE_KEY_PASSPHRASE") or None
+
+    if not args.password and not args.key_file and not key_content and not args.no_default_key:
         args.key_file = default_key_file()
         if not args.key_file:
             parser.error("no --password, $FIBTRACE_PASSWORD, --key-file, or ~/.ssh/id_* key found")
-    if not args.password and not args.key_file:
-        parser.error("no --password, $FIBTRACE_PASSWORD, or --key-file given")
+    if not args.password and not args.key_file and not key_content:
+        parser.error("no --password, $FIBTRACE_PASSWORD, --key-file, or $FIBTRACE_KEY_DATA given")
+
+    if key_content or args.key_file:
+        # Fail once, up front, on a bad key or wrong passphrase instead of
+        # marking every hop unreachable
+        from .client import SSHClient, SSHClientConfig
+        probe = SSHClientConfig(host=args.source, username=args.username,
+                                key_content=key_content,
+                                key_file=None if key_content else args.key_file,
+                                key_passphrase=key_passphrase)
+        try:
+            SSHClient(probe)._load_private_key()
+        except Exception as e:
+            parser.error(f"cannot load SSH private key ({e}); check the key and its passphrase")
 
     config = WalkerConfig(
         target_prefix=prefix_str,
         source_host=args.source,
         username=args.username,
         password=args.password,
-        key_file=args.key_file,
+        key_file=None if key_content else args.key_file,
+        key_content=key_content,
+        key_passphrase=key_passphrase,
         max_depth=args.max_depth,
         probe_target_host=not args.no_probe_target,
         command_timeout=args.timeout,

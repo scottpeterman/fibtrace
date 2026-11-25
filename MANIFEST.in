@@ -1,8 +1,4 @@
-# Source distribution manifest.
-# TODO(content-phase): review once pyproject.toml is finalized. Modern
-# setuptools with a flat layout mostly picks up package-data from
-# [tool.setuptools.package-data] in pyproject.toml; MANIFEST.in is for
-# the sdist (source tarball) specifically.
+# Source distribution manifest (sdist). Wheel package data comes from pyproject.toml.
 
 include README.md
 include LICENSE

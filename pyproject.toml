@@ -3,8 +3,8 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "fibtrace"
-version = "0.4.1"
+name = "fibtrace2"
+version = "0.2.0"
 description = "Hop-by-hop forwarding chain validation with ECMP graph visualization. Not a traceroute — a FIB trace."
 readme = "README.md"
 license = {text = "GPLv3"}
@@ -80,10 +80,10 @@ ldap = [
     "PyYAML>=6.0",
 ]
 all = [
-    "fibtrace[tui,web]",
+    "fibtrace2[tui,web]",
 ]
 dev = [
-    "fibtrace[all,ldap]",
+    "fibtrace2[all,ldap]",
     "pytest>=7.0",
     "build>=1.0",
     "twine>=4.0",

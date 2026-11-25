@@ -42,6 +42,10 @@ logger = logging.getLogger("fibtrace-web.auth")
 
 ENV_USERS = "FIBTRACE_USERS"
 ENV_AUTH_CONFIG = "FIBTRACE_AUTH_CONFIG"
+# Set only by `fibtrace web` after it has confirmed a loopback bind. Without it
+# the built-in admin/fibtrace login and LDAP mock mode refuse every login, so
+# starting the app another way (uvicorn directly, behind a proxy) cannot expose them.
+ENV_LOOPBACK_OK = "FIBTRACE_LOOPBACK_CONFIRMED"
 DEFAULT_USERS = {"admin": "fibtrace"}
 VALID_PROVIDERS = ("local", "ldap", "ldap+local")
 
@@ -208,7 +212,7 @@ class LdapAuthProvider:
 
         if not _HAVE_LDAP3 and self._explicit_factory is None:
             logger.warning("auth provider includes 'ldap' but ldap3 is not installed - "
-                           "LDAP logins will fail. pip install 'fibtrace[ldap]'")
+                           "LDAP logins will fail. pip install 'fibtrace2[ldap]'")
         if not self.allowed_groups and not self.mock_enabled:
             logger.warning("auth.ldap.allowed_groups is empty - ANY account that can bind "
                            "to the directory can log in to fibtrace")
@@ -412,7 +416,7 @@ def load_auth_config(path: Optional[str] = None) -> dict:
         try:
             import yaml
         except ImportError as e:
-            raise RuntimeError("YAML auth config needs PyYAML (pip install 'fibtrace[ldap]') "
+            raise RuntimeError("YAML auth config needs PyYAML (pip install 'fibtrace2[ldap]') "
                                "or use a .json file") from e
         data = yaml.safe_load(text) or {}
     return data.get("auth", data)
@@ -422,8 +426,10 @@ class AuthManager:
     """Runs the configured provider chain; first success wins."""
 
     def __init__(self, config: Optional[dict] = None, users: Optional[dict] = None,
-                 connection_factory=None):
+                 connection_factory=None, loopback_confirmed: Optional[bool] = None):
         self.config = config or {}
+        self.loopback_confirmed = (os.environ.get(ENV_LOOPBACK_OK) == "1"
+                                   if loopback_confirmed is None else loopback_confirmed)
         self.provider_name = (self.config.get("provider") or "local").lower()
         if self.provider_name not in VALID_PROVIDERS:
             raise ValueError(f"auth.provider must be one of {', '.join(VALID_PROVIDERS)}, "
@@ -439,6 +445,11 @@ class AuthManager:
             self.providers.append(self.local)
 
     def authenticate(self, username: str, password: str) -> AuthResult:
+        problem = self.exposure_problem()
+        if problem and not self.loopback_confirmed:
+            logger.warning("login refused: %s and the app was not started by `fibtrace web` "
+                           "on a loopback address", problem)
+            return AuthResult.failure("login disabled: configure FIBTRACE_USERS or LDAP")
         result = AuthResult.failure("no provider")
         for provider in self.providers:
             result = provider.authenticate(username or "", password or "")

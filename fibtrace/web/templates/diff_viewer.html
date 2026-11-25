@@ -1533,8 +1533,7 @@ document.getElementById('exportBtn').addEventListener('click', () => {
   const a = document.createElement('a');
   a.href = url;
   a.download = 'fibtrace-diff.json';
-  a.click();
-  URL.revokeObjectURL(url);
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 });
 
 // Pane control buttons
