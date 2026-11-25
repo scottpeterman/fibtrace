@@ -13,8 +13,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="fibtrace web",
         description="Run the fibtrace web dashboard (FastAPI + uvicorn).",
     )
-    p.add_argument("--host", default="0.0.0.0",
-                   help="Bind address (default: 0.0.0.0)")
+    p.add_argument("--host", default="127.0.0.1",
+                   help="Bind address (default: 127.0.0.1)")
     p.add_argument("--port", type=int, default=8100,
                    help="Port (default: 8100)")
     p.add_argument("--reload", action="store_true",
@@ -27,6 +27,21 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+
+    import ipaddress
+    import os
+    try:
+        loopback = ipaddress.ip_address(args.host).is_loopback
+    except ValueError:
+        loopback = args.host == "localhost"
+    if not loopback and not os.environ.get("FIBTRACE_USERS"):
+        print(
+            f"refusing to bind {args.host} with the built-in admin/fibtrace login;\n"
+            "set FIBTRACE_USERS (and FIBTRACE_SECRET_KEY) first, e.g.\n"
+            "    export FIBTRACE_USERS='{\"scott\": \"<password>\"}'",
+            file=sys.stderr,
+        )
+        return 2
 
     try:
         import uvicorn

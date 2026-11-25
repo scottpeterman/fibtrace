@@ -231,8 +231,11 @@ class SSHClient:
         )
         self._shell.settimeout(self.config.timeout)
 
-        # Wait for shell initialization
-        time.sleep(2)
+        # Wait for the banner/first prompt instead of a fixed 2s sleep
+        deadline = time.time() + 2.0
+        while time.time() < deadline and not self._shell.recv_ready():
+            time.sleep(0.05)
+        time.sleep(0.2)
 
         # Read initial output
         self._drain_output()
@@ -318,18 +321,25 @@ class SSHClient:
         # Clear any pending data
         self._drain_output()
 
-        # Send newline to trigger prompt
+        # Send newline to trigger prompt; return as soon as the output goes
+        # quiet with a recognizable prompt (was a fixed 6s per device)
         self._shell.send("\n")
-        time.sleep(3)
 
-        # Collect output
         buffer = ""
-        start_time = time.time()
-        while time.time() - start_time < 3:
+        last_rx = time.time()
+        start_time = last_rx
+        while time.time() - start_time < 6:
             if self._shell.recv_ready():
                 buffer += self._recv_filtered()
-            else:
-                time.sleep(0.1)
+                last_rx = time.time()
+                continue
+            if buffer and time.time() - last_rx >= 0.3:
+                prompt = self._extract_prompt(buffer)
+                if prompt:
+                    self._detected_prompt = prompt
+                    logger.debug(f"Detected prompt: {prompt!r}")
+                    return prompt
+            time.sleep(0.05)
 
         # Try to extract prompt
         prompt = self._extract_prompt(buffer)

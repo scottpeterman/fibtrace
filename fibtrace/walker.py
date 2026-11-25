@@ -38,6 +38,8 @@ Loop vs Convergence (ECMP diamond detection):
 """
 
 from __future__ import annotations
+
+import os
 from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -190,6 +192,15 @@ _LAG_PATTERN = _re.compile(
 # ============================================================
 # Dual-stack address helpers
 # ============================================================
+
+def default_key_file() -> Optional[str]:
+    """First conventional private key under ~/.ssh. The SSH agent is never used."""
+    for name in ("id_ed25519", "id_ecdsa", "id_rsa"):
+        path = os.path.expanduser(f"~/.ssh/{name}")
+        if os.path.isfile(path):
+            return path
+    return None
+
 
 def _parse_ip(addr_str: str) -> IPv4Address | IPv6Address:
     """Parse an IPv4 or IPv6 address string. Raises ValueError on failure."""
@@ -1046,6 +1057,9 @@ class ChainWalker:
                     target_ip = str(target_net.network_address)
                     egress = next((r.egress_interface.name for r in (hop.resolutions or [])
                                    if r.egress_interface), None)
+                    if egress is None:
+                        # connected routes carry no ARP resolution; the route itself names the interface
+                        egress = next((nh.interface for nh in hop.route.next_hops if nh.interface), None)
                     if target_ip != item.ssh_target:
                         self._progress(f"  ↪ {identity.hostname} delivers {target_ip} connected; probing the host")
                         queue.append(QueueItem(
@@ -2618,8 +2632,11 @@ def main(argv=None):
                         help="Source device IP to start the walk")
 
     parser.add_argument("-u", "--username", required=True)
-    parser.add_argument("--password", default=None)
-    parser.add_argument("--key-file", default=None)
+    parser.add_argument("--password", default=os.environ.get("FIBTRACE_PASSWORD"),
+                        help="SSH password (default: $FIBTRACE_PASSWORD)")
+    parser.add_argument("--key-file", default=None,
+                        help="SSH private key (default: first of ~/.ssh/id_ed25519, id_ecdsa, id_rsa "
+                             "when no password is given)")
 
     parser.add_argument("--max-depth", type=int, default=15)
     parser.add_argument("--timeout", type=float, default=10.0,
@@ -2673,6 +2690,11 @@ def main(argv=None):
         _parse_ip(args.source)
     except (ValueError, AddressValueError) as e:
         parser.error(f"Invalid source address '{args.source}': {e}")
+
+    if not args.password and not args.key_file:
+        args.key_file = default_key_file()
+        if not args.key_file:
+            parser.error("no --password, $FIBTRACE_PASSWORD, --key-file, or ~/.ssh/id_* key found")
 
     config = WalkerConfig(
         target_prefix=prefix_str,

@@ -10,6 +10,8 @@ Two modes:
 
 from __future__ import annotations
 
+import os
+
 import asyncio
 import queue
 import threading
@@ -488,7 +490,8 @@ def main(argv=None):
     parser.add_argument("-p", "--prefix", default=None)
     parser.add_argument("-s", "--source", default=None)
     parser.add_argument("-u", "--username", default=None)
-    parser.add_argument("--password", default=None)
+    parser.add_argument("--password", default=os.environ.get("FIBTRACE_PASSWORD"),
+                        help="SSH password (default: $FIBTRACE_PASSWORD)")
     parser.add_argument("--key-file", default=None)
     parser.add_argument("--max-depth", type=int, default=15)
     parser.add_argument("--timeout", type=float, default=10.0)
@@ -520,7 +523,11 @@ def main(argv=None):
         except (ValueError, AddressValueError) as e:
             parser.error(f"Invalid prefix: {e}")
 
-    from .walker import WalkerConfig
+    from .walker import WalkerConfig, default_key_file
+    if not args.password and not args.key_file:
+        args.key_file = default_key_file()
+        if not args.key_file:
+            parser.error("no --password, $FIBTRACE_PASSWORD, --key-file, or ~/.ssh/id_* key found")
     config = WalkerConfig(
         target_prefix=prefix_str, source_host=args.source,
         username=args.username, password=args.password,

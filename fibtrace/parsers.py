@@ -1004,7 +1004,8 @@ class JunosParser:
             next_hops = []
             for nh in _xml_find_all(rt_entry, 'nh'):
                 nh_addr = _xml_text(nh, 'to')
-                nh_intf = _xml_text(nh, 'via')
+                # Local routes (the device's own address) name the interface in nh-local-interface
+                nh_intf = _xml_text(nh, 'via') or _xml_text(nh, 'nh-local-interface')
                 next_hops.append(RouteNextHop(
                     address=_safe_ip(nh_addr),
                     interface=nh_intf or None,

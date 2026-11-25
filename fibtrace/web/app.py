@@ -288,8 +288,11 @@ async def ws_trace(websocket: WebSocket):
             "--username", params["username"],
         ]
 
+        # Password goes in the child's environment, not argv (argv is visible in ps)
+        child_env = dict(os.environ)
+        child_env.pop("FIBTRACE_PASSWORD", None)
         if params.get("password"):
-            cmd += ["--password", params["password"]]
+            child_env["FIBTRACE_PASSWORD"] = params["password"]
         if params.get("key_file"):
             cmd += ["--key-file", params["key_file"]]
         if params.get("max_depth"):
@@ -335,6 +338,7 @@ async def ws_trace(websocket: WebSocket):
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=child_env,
         )
         trace.process = process
 

@@ -44,7 +44,7 @@ class FakeClient:
     def disconnect(self): pass
 
 
-def run(target, ssh_ok=frozenset(HOSTS), probe=True):
+def run(target, ssh_ok=frozenset(HOSTS), probe=True, connected_intf=None):
     route = lab(target)
     cfg = W.WalkerConfig(target_prefix=target, source_host="172.16.1.2", username="u", password="p",
                          probe_target_host=probe, event_callback=None)
@@ -67,7 +67,8 @@ def run(target, ssh_ok=frozenset(HOSTS), probe=True):
     def gather(client, ident, idx):
         proto, nhs = route(ident.hostname)
         r = RouteEntry(prefix=Prefix(network=ip_network(target, strict=False)), protocol=proto,
-                       next_hops=[RouteNextHop(address=ip_address(n)) for n in nhs])
+                       next_hops=([RouteNextHop(address=ip_address(n)) for n in nhs]
+                                  or ([RouteNextHop(interface=connected_intf)] if connected_intf else [])))
         hop = Hop(device=DeviceInfo(hostname=ident.hostname, ip_address=ip_address(client.ip)),
                   target_prefix=r.prefix, route=r, verdict=HopVerdict.HEALTHY,
                   next_device_ips=[ip_address(n) for n in nhs])
@@ -114,3 +115,10 @@ def test_prefix_targets_and_opt_out_do_not_probe():
     assert "eng-leaf-2" not in g["nodes"]
     chain, g, ev = run("172.16.50.5/32", probe=False)
     assert "eng-leaf-2" not in g["nodes"]
+
+
+def test_final_host_edge_carries_connected_interface():
+    # connected routes have no ARP resolution; the delivering edge still names the interface
+    chain, g, ev = run("172.16.50.5/32", connected_intf="Vlan50")
+    into_leaf = [e for e in g["edges"] if e["to"] == "eng-leaf-2"]
+    assert into_leaf and all(e["egress_interface"] == "Vlan50" for e in into_leaf)
