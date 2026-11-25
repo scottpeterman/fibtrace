@@ -38,10 +38,15 @@ pip install fibtrace
 # With optional UIs
 pip install 'fibtrace[tui]'        # + Textual TUI
 pip install 'fibtrace[web]'        # + FastAPI web dashboard
-pip install 'fibtrace[tui,web]'    # everything
+pip install 'fibtrace[tui,web]'    # both UIs
+pip install 'fibtrace[web,ldap]'   # web dashboard with LDAP/AD login
 
-# Headless walk
-fibtrace walk -p 10.1.0.0/24 -s 172.16.1.1 -u admin --password secret --domain example.com
+# Headless walk (key auth: ~/.ssh/id_ed25519, id_ecdsa or id_rsa)
+fibtrace walk -p 10.1.0.0/24 -s 172.16.1.1 -u admin --domain example.com
+
+# Password auth: put it in the environment, not on the command line
+read -rs FIBTRACE_PASSWORD && export FIBTRACE_PASSWORD
+fibtrace walk -p 10.1.0.0/24 -s 172.16.1.1 -u admin
 
 # Open the graph viewer (then drag-drop or load JSON files)
 fibtrace view
@@ -63,8 +68,7 @@ Run `fibtrace <subcommand> --help` for subcommand-specific options.
 
 ```bash
 # 1. Run a trace, save the graph
-fibtrace walk -p 172.17.1.136/32 -s 172.17.1.135 -u admin --password secret \
-    --skip-mac --nh-source auto --json > trace.json
+fibtrace walk -p 172.17.1.136/32 -s 172.17.1.135 -u admin --skip-mac --nh-source auto --json > trace.json
 
 # 2. Open the viewer
 fibtrace view
@@ -81,14 +85,12 @@ Snapshot a chain, make a change, snapshot again, and diff the two forwarding gra
 
 ```bash
 # 1. Preflight snapshot
-fibtrace walk -p 172.17.202.2/32 -s 172.17.1.18 -u admin --password secret \
-    --graph preflight.graph.json
+fibtrace walk -p 172.17.202.2/32 -s 172.17.1.18 -u admin --graph preflight.graph.json
 
 # 2. Execute the change (BGP prepend, interface shut, peer cleanup, ...)
 
 # 3. Postflight snapshot
-fibtrace walk -p 172.17.202.2/32 -s 172.17.1.18 -u admin --password secret \
-    --graph postflight.graph.json
+fibtrace walk -p 172.17.202.2/32 -s 172.17.1.18 -u admin --graph postflight.graph.json
 
 # 4. Compare — one-line verdict
 fibtrace diff preflight.graph.json postflight.graph.json
@@ -148,7 +150,7 @@ fibtrace also runs as a terminal application with a split-pane layout: a forward
 # Requires the [tui] extra: pip install 'fibtrace[tui]'
 
 # Live trace
-fibtrace tui -p 10.0.0.0/24 -s 172.16.1.1 -u admin --password secret
+fibtrace tui -p 10.0.0.0/24 -s 172.16.1.1 -u admin
 
 # Demo mode — replay a mock trace (no network needed)
 fibtrace tui --demo
@@ -171,9 +173,16 @@ fibtrace also ships a browser-based dashboard — FastAPI + WebSocket-streamed t
 ```bash
 # Requires the [web] extra: pip install 'fibtrace[web]'
 
+# Local use: binds 127.0.0.1, built-in admin / fibtrace login
+fibtrace web --port 8100
+
+# Shared use: hashed local accounts or LDAP, then bind beyond loopback
+fibtrace web --hash-password
+export FIBTRACE_USERS='{"scott": "scrypt$16384$8$1$..."}'
 fibtrace web --host 0.0.0.0 --port 8100
-# Open http://localhost:8100  (default admin / fibtrace)
 ```
+
+Dashboard users enter their own SSH username and password for every trace; the server never lends them its own keys. See [Status & Security](#status--security).
 
 The subprocess model means the web app doesn't import fibtrace internals — each trace runs as a child `python -m fibtrace.walker` process. That keeps the web layer isolated from walker changes and lets multiple concurrent users run traces without sharing state. See [README_WEB.md](README_WEB.md) for deployment details, environment variables, and architecture notes.
 
@@ -222,19 +231,25 @@ Subcommands:
 fibtrace walk usage:
   fibtrace walk [-h] -p PREFIX -s SOURCE -u USERNAME
                 [--password PASSWORD] [--key-file KEY_FILE]
-                [--max-depth MAX_DEPTH] [--timeout TIMEOUT]
-                [--legacy-ssh] [--error-threshold ERROR_THRESHOLD]
-                [--skip-mac] [--nh-source {fib,rib,auto}]
-                [--domain DOMAIN] [--log LOG]
-                [--json] [--graph FILE] [--dot FILE]
+                [--no-default-key] [--max-depth MAX_DEPTH]
+                [--timeout TIMEOUT] [--legacy-ssh]
+                [--error-threshold ERROR_THRESHOLD] [--skip-mac]
+                [--nh-source {fib,rib,auto}] [--domain DOMAIN] [-v]
+                [--debug] [--log LOG] [--no-probe-target] [--json]
+                [--graph FILE] [--dot FILE]
 
 Arguments:
   -p, --prefix          Target prefix (e.g., 10.0.0.0/24, 172.16.1.1,
                         2001:db8::/32, or 2001:db8::1)
   -s, --source          Source device IP to start the walk
   -u, --username        SSH username
-  --password            SSH password
+
+Authentication (first match wins):
+  --password            SSH password (default: $FIBTRACE_PASSWORD)
   --key-file            Path to SSH private key
+                        (default: first of ~/.ssh/id_ed25519, id_ecdsa,
+                        id_rsa when no password is given)
+  --no-default-key      Never fall back to ~/.ssh keys
 
 Walk Options:
   --max-depth           Maximum hop depth (default: 15)
@@ -244,6 +259,10 @@ Walk Options:
   --skip-mac            Skip MAC table lookups (faster on L3 paths)
   --nh-source           Next-hop source: fib (default), rib, or auto
   --domain              DNS domain suffix for neighbor hostname resolution
+  --no-probe-target     Don't SSH to a /32 or /128 target after the hop
+                        that delivers it on a connected route
+  -v, --verbose         Print per-hop summaries
+  --debug               Debug logging
 
 Output:
   --json                Full trace + forwarding graph as JSON to stdout
@@ -262,6 +281,7 @@ fibtrace uses optional extras to keep the base install small. The walker, diff, 
 | `pip install 'fibtrace[tui]'` | + Textual TUI (adds `textual`, `rich`) |
 | `pip install 'fibtrace[web]'` | + FastAPI web dashboard (adds `fastapi`, `uvicorn`, `jinja2`, `itsdangerous`, `websockets`, `python-multipart`) |
 | `pip install 'fibtrace[tui,web]'` | Both UIs |
+| `pip install 'fibtrace[web,ldap]'` | + LDAP/Active Directory login for the dashboard (adds `ldap3`, `PyYAML`) |
 | `pip install 'fibtrace[dev]'` | All of the above + `pytest`, `build`, `twine` |
 
 Requires Python 3.9 or newer.
@@ -288,7 +308,8 @@ fibtrace/
 ├── walker.py                   # BFS chain walker, verdict assessment, graph construction
 └── web/                        # FastAPI dashboard (optional, [web] extra)
     ├── app.py                  # FastAPI app, WebSocket terminal streaming, session auth
-    ├── auth.py                 # Pluggable auth backends (env / LDAP / SSH-proxy)
+    ├── auth.py                 # Login providers: local (scrypt), LDAP/AD, ldap+local chain
+    ├── hashing.py              # scrypt password hashing (stdlib only)
     ├── __main__.py             # `fibtrace web` entry point (uvicorn launcher)
     ├── templates/              # login, dashboard, graph, viewer, diff pages
     └── static/
@@ -358,29 +379,31 @@ Parsers are dispatched via a registry keyed on `(Platform, data_type)`. Data typ
 
 ### SSH Client
 
-The SSH client is adapted from [Secure Cartography](https://github.com/scottpeterman/secure_cartography), a production-hardened Paramiko wrapper validated against 350+ devices. Features: invoke-shell mode (required for most network gear), pagination disable shotgun, legacy cipher/KEX support, ANSI sequence filtering, and multi-vendor prompt detection with hostname extraction.
+The SSH client is adapted from [Secure Cartography](https://github.com/scottpeterman/secure_cartography), a production-hardened Paramiko wrapper validated against 350+ devices. Features: invoke-shell mode (required for most network gear), pagination disable shotgun, legacy cipher/KEX support, ANSI sequence filtering, and multi-vendor prompt detection with hostname extraction. Paramiko is pinned to 4.0.0, the version the legacy-device transport is tested on.
 
 ## Status & Security
 
-**Alpha.** Core functionality — walker, forwarding graph, diff, viewer — is stable enough for operational use in controlled change windows. Expect breaking changes to CLI flags, graph schema fields, and module paths between 0.x releases. Pin your version (`fibtrace==0.4.0`) if you're scripting against the JSON output or integrating with a pipeline.
+**Alpha.** Core functionality — walker, forwarding graph, diff, viewer — is stable enough for operational use in controlled change windows. Expect breaking changes to CLI flags, graph schema fields, and module paths between 0.x releases. Pin your version if you're scripting against the JSON output or integrating with a pipeline.
 
-**Authentication is deliberately minimal.** The web dashboard currently ships with one backend: a JSON user dict in an environment variable (`FIBTRACE_USERS`). Passwords are compared as plaintext against the env value. This is appropriate for:
+### What fibtrace does on your devices
 
-- A lab on an isolated management VLAN
-- A single-operator local install
-- Running behind an authenticating reverse proxy (Cloudflare Access, oauth2-proxy, Tailscale Funnel, SSO-gated nginx, etc.)
+fibtrace only runs `show` commands plus the session pager setting (`terminal length 0` and its vendor equivalents). It never enters configuration mode. The target prefix is validated as an IPv4 or IPv6 network before it is placed in any device command.
 
-It is **not** appropriate for:
+### Device credentials
 
-- Internet-exposed deployments without a front-end auth layer
-- Shared-tenant environments where password hygiene matters
-- Any deployment where a compromised dashboard credential gives access to production network devices — which is every real deployment, because the dashboard prompts for SSH credentials that the walker then uses directly
+- **Key auth is the default.** With no password, the walker uses `--key-file`, or else the first of `~/.ssh/id_ed25519`, `id_ecdsa` or `id_rsa`. The SSH agent is never used.
+- **Passwords belong in the environment.** `--password` is visible in `ps` and lands in shell history; `FIBTRACE_PASSWORD` does neither.
+- **Host keys are not verified.** fibtrace accepts any SSH host key (Paramiko `AutoAddPolicy`) and does not check `known_hosts`. Something sitting on the management path could impersonate a device and capture a password. Prefer key auth, and run the walker from a host on a trusted management network.
 
-Dashboard auth supports scrypt-hashed local accounts and LDAP/Active Directory (`ldap` or `ldap+local` with break-glass), gated on directory group membership. See [README_WEB.md](README_WEB.md#authentication). The dashboard binds 127.0.0.1 by default.
+### Web dashboard
 
-**Credential handling in live traces.** The web app hands the device password to the walker subprocess in its environment (`FIBTRACE_PASSWORD`), not its command line, so it does not show in `ps`. On the CLI, prefer `FIBTRACE_PASSWORD` or key auth over `--password`.
-
-**HTTPS.** The built-in FastAPI/uvicorn server supports direct SSL via uvicorn's `--ssl-keyfile` / `--ssl-certfile` flags (drop to `uvicorn fibtrace.web.app:app ...` to use them today, or wait for these flags to be exposed through `fibtrace web` in a later release). For production, a proper reverse proxy (nginx, caddy) handles TLS better — cert rotation without restart, HTTP/2, OCSP stapling.
+- **Binds 127.0.0.1 by default.** `fibtrace web` refuses to bind any other address while the built-in `admin`/`fibtrace` login or LDAP mock mode is active.
+- **Login providers.** `local` accounts come from `FIBTRACE_USERS` as scrypt hashes (`fibtrace web --hash-password`); plaintext values still work but log a warning. `ldap` authenticates against Active Directory or any LDAP server and requires membership in an `allowed_groups` group. `ldap+local` tries the directory first and falls back to local break-glass accounts when it is unreachable. Configuration is in [README_WEB.md](README_WEB.md#authentication).
+- **Directory transport.** LDAPS or StartTLS, with certificate validation on by default. A failed StartTLS never falls back to a cleartext bind. A cleartext configuration starts, but logs a warning on every start.
+- **No roles.** Anyone who can log in can run traces from the server. Restrict who that is with `allowed_groups` or the local account list.
+- **Users bring their own device credentials.** Every trace needs the user's own SSH username and password. The server rejects a trace without a password or with a key file path, and launches the walker with `--no-default-key`, so a dashboard login never reaches the server account's SSH keys. The password goes to the walker subprocess through its environment, not its command line, and is not stored.
+- **Sessions** are signed, httponly cookies valid for 24 hours. Set `FIBTRACE_SECRET_KEY`; without it a random key is generated at each start, and a restart logs everyone out.
+- **HTTPS.** Logins and device passwords cross the wire in the clear without it. Put a reverse proxy (nginx, caddy) in front for TLS, or run `uvicorn fibtrace.web.app:app` directly with its `--ssl-keyfile` and `--ssl-certfile` flags.
 
 ## Roadmap
 
@@ -392,6 +415,7 @@ The core walk engine, forwarding graph, TUI, and web dashboard are proven across
 - **NX-OS IPv6 parsers** — v6 command templates are in place; ND and ARP-by-MAC parsers needed for NX-OS.
 - **MPLS label path tracing** — Models include label stacks and LFIB lookups. Parsers and walker integration needed.
 - **VXLAN/overlay tracing** — Follow the overlay, then validate the underlay for each VTEP-to-VTEP segment.
+- **Host key verification** — Check device host keys against `known_hosts`, with a trust-on-first-use option.
 - **SSH-proxy web auth** — Authenticate dashboard users by attempting SSH against a designated network device.
 
 ## License
