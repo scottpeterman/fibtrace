@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>fibtrace — Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  :root {
+    --bg-deep: #0a0e14; --bg-surface: #0f1419; --bg-card: #141a22; --bg-hover: #1a2230;
+    --border-subtle: #1e2a3a; --border-medium: #2a3a4e;
+    --text-primary: #e0e6ed; --text-secondary: #8899aa; --text-muted: #556677;
+    --accent-blue: #00d4ff; --accent-green: #00e88f; --accent-orange: #ffaa33;
+    --accent-red: #ff4466; --accent-purple: #b48eff; --accent-cyan: #00e5c7;
+  }
+  body { background: var(--bg-deep); color: var(--text-primary); font-family: 'Outfit', sans-serif; height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+  .header { padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--border-subtle); background: var(--bg-surface); flex-shrink: 0; height: 52px; }
+  .header-left { display: flex; align-items: center; gap: 16px; }
+  .logo { font-family: 'JetBrains Mono', monospace; font-size: 18px; font-weight: 700; color: var(--accent-blue); letter-spacing: -0.5px; }
+  .logo span { color: var(--text-muted); font-weight: 400; }
+  .header-status { font-size: 12px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace; }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  .user-badge { font-size: 12px; color: var(--text-secondary); font-family: 'JetBrains Mono', monospace; }
+  .btn { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border-medium); background: var(--bg-card); color: var(--text-secondary); font-family: 'Outfit', sans-serif; font-size: 12px; cursor: pointer; transition: all 0.2s; text-decoration: none; }
+  .btn:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--accent-blue); }
+  .btn-primary { background: rgba(0,212,255,0.1); border-color: var(--accent-blue); color: var(--accent-blue); }
+  .btn-primary:hover { background: rgba(0,212,255,0.2); }
+  .btn-success { background: rgba(0,232,143,0.1); border-color: var(--accent-green); color: var(--accent-green); }
+  .btn-success:hover { background: rgba(0,232,143,0.2); }
+  .btn-danger { background: rgba(255,68,102,0.08); border-color: rgba(255,68,102,0.4); color: var(--accent-red); }
+  .btn-danger:hover { background: rgba(255,68,102,0.15); }
+  .btn-disabled { opacity: 0.3; pointer-events: none; cursor: default; }
+  .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:100; align-items:center; justify-content:center; backdrop-filter:blur(4px); }
+  .modal-overlay.active { display:flex; }
+  .modal-box { background:var(--bg-surface); border:1px solid var(--border-medium); border-radius:12px; padding:24px; width:440px; }
+  .modal-title { font-weight:600; font-size:15px; margin-bottom:8px; }
+  .modal-text { font-size:13px; color:var(--text-secondary); margin-bottom:20px; line-height:1.5; }
+  .modal-actions { display:flex; justify-content:flex-end; gap:8px; }
+  .main { display: flex; flex: 1; overflow: hidden; }
+  .sidebar { width: 340px; min-width: 340px; border-right: 1px solid var(--border-subtle); background: var(--bg-surface); overflow-y: auto; display: flex; flex-direction: column; }
+  .sidebar-section { padding: 16px 20px; border-bottom: 1px solid var(--border-subtle); }
+  .sidebar-title { font-size: 10px; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 12px; }
+  .form-row { margin-bottom: 12px; }
+  .form-row label { display: block; font-size: 11px; font-weight: 500; color: var(--text-secondary); margin-bottom: 4px; }
+  .form-row input, .form-row select { width: 100%; padding: 8px 10px; background: var(--bg-card); border: 1px solid var(--border-subtle); border-radius: 6px; color: var(--text-primary); font-family: 'JetBrains Mono', monospace; font-size: 13px; outline: none; transition: border-color 0.2s; }
+  .form-row input:focus, .form-row select:focus { border-color: var(--accent-blue); }
+  .form-row input::placeholder { color: var(--text-muted); }
+  .form-row select { cursor: pointer; }
+  .form-row select option { background: var(--bg-card); color: var(--text-primary); }
+  .form-row-inline { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .form-row-required label::after { content: ' *'; color: var(--accent-red); font-size: 10px; }
+  .form-check { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .form-check input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent-blue); cursor: pointer; }
+  .form-check label { font-size: 12px; color: var(--text-secondary); cursor: pointer; margin-bottom: 0; }
+  .advanced-toggle { font-size: 11px; color: var(--text-muted); cursor: pointer; display: flex; align-items: center; gap: 4px; margin-bottom: 12px; user-select: none; }
+  .advanced-toggle:hover { color: var(--text-secondary); }
+  .advanced-toggle .arrow { transition: transform 0.2s; display: inline-block; }
+  .advanced-toggle .arrow.open { transform: rotate(90deg); }
+  .advanced-section { display: none; }
+  .advanced-section.open { display: block; }
+  .run-area { padding: 16px 20px; border-top: 1px solid var(--border-subtle); margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
+  .btn-run { width: 100%; padding: 12px; font-size: 14px; font-weight: 600; border-radius: 8px; }
+  .btn-graph-link { width: 100%; padding: 10px; font-size: 13px; font-weight: 500; border-radius: 8px; text-align: center; }
+  .terminal-area { flex: 1; display: flex; flex-direction: column; position: relative; overflow: hidden; background: var(--bg-deep); }
+  .terminal-header { padding: 8px 16px; border-bottom: 1px solid var(--border-subtle); background: var(--bg-surface); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+  .terminal-tabs { display: flex; }
+  .terminal-tab { padding: 6px 16px; font-size: 12px; font-weight: 500; color: var(--accent-blue); border-bottom: 2px solid var(--accent-blue); }
+  .terminal-actions { display: flex; gap: 8px; }
+  .terminal-container { flex: 1; padding: 8px; overflow: hidden; }
+  #terminal { height: 100%; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+  .status-dot.idle { background: var(--text-muted); }
+  .status-dot.running { background: var(--accent-blue); animation: pulse 1.5s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(0,212,255,0.4); } 50% { opacity: 0.7; box-shadow: 0 0 0 6px rgba(0,212,255,0); } }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border-medium); border-radius: 3px; }
+  .xterm { padding: 0; }
+  .xterm-viewport::-webkit-scrollbar { width: 6px; }
+  .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
+  .xterm-viewport::-webkit-scrollbar-thumb { background: var(--border-medium); border-radius: 3px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="header-left">
+    <div class="logo">fibtrace<span>.web</span></div>
+    <div class="header-status"><span class="status-dot idle" id="statusDot"></span><span id="statusText">Ready</span></div>
+  </div>
+  <div class="header-right">
+    <span class="user-badge">{{ username }}</span>
+    <a href="/viewer" class="btn" id="btnViewer">Graph Viewer</a>
+    <a href="/diff"   class="btn" id="btnDiff">Diff Viewer</a>
+    <a href="/logout" class="btn">Logout</a>
+  </div>
+</div>
+<div class="main">
+  <div class="sidebar">
+    <div class="sidebar-section">
+      <div class="sidebar-title">Target</div>
+      <div class="form-row form-row-required"><label>Prefix</label><input type="text" id="prefix" placeholder="10.0.0.0/24 or 10.0.0.1" spellcheck="false"></div>
+      <div class="form-row form-row-required"><label>Source Device IP</label><input type="text" id="source" placeholder="172.16.1.1" spellcheck="false"></div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-title">Credentials</div>
+      <div class="form-row form-row-required"><label>SSH Username</label><input type="text" id="sshUser" placeholder="admin" spellcheck="false" autocomplete="off"></div>
+      <div class="form-row"><label>SSH Password</label><input type="password" id="sshPass" placeholder="••••••••" autocomplete="off"></div>
+      <div class="form-row"><label>Key File (server path)</label><input type="text" id="keyFile" placeholder="/home/user/.ssh/id_rsa" spellcheck="false"></div>
+    </div>
+    <div class="sidebar-section">
+      <div class="sidebar-title">Options</div>
+      <div class="form-row"><label>Next-Hop Source</label><select id="nhSource"><option value="fib">FIB</option><option value="rib" selected>RIB (default)</option><option value="auto">Auto</option></select></div>
+      <div class="form-row"><label>DNS Domain</label><input type="text" id="domain" placeholder="company.com" spellcheck="false"></div>
+      <div class="form-check"><input type="checkbox" id="verbose"><label for="verbose">Verbose output</label></div>
+      <div class="form-check"><input type="checkbox" id="legacySsh"><label for="legacySsh">Legacy SSH ciphers</label></div>
+      <div class="form-check"><input type="checkbox" id="skipMac"><label for="skipMac">Skip MAC lookups</label></div>
+      <div class="advanced-toggle" onclick="toggleAdvanced()"><span class="arrow" id="advArrow">▸</span> Advanced</div>
+      <div class="advanced-section" id="advancedSection">
+        <div class="form-row-inline">
+          <div class="form-row"><label>Max Depth</label><input type="number" id="maxDepth" value="15" min="1" max="50"></div>
+          <div class="form-row"><label>Timeout (s)</label><input type="number" id="timeout" value="10" min="1" max="120" step="0.5"></div>
+        </div>
+        <div class="form-row"><label>Error Threshold</label><input type="number" id="errorThreshold" value="100" min="0"></div>
+        <div class="form-check"><input type="checkbox" id="debug"><label for="debug">Debug output</label></div>
+      </div>
+    </div>
+    <div class="run-area">
+      <button class="btn btn-primary btn-run" id="btnRun" onclick="startTrace()">Run Trace</button>
+      <button class="btn btn-danger btn-run" id="btnStop" style="display:none" onclick="stopTrace()">Stop</button>
+      <button class="btn btn-success btn-graph-link" id="btnGraph" style="display:none" onclick="showSaveModal()">View Forwarding Graph ↗</button>
+    </div>
+  </div>
+  <div class="terminal-area">
+    <div class="terminal-header">
+      <div class="terminal-tabs"><div class="terminal-tab">Terminal</div></div>
+      <div class="terminal-actions"><button class="btn" onclick="clearTerminal()">Clear</button></div>
+    </div>
+    <div class="terminal-container"><div id="terminal"></div></div>
+  </div>
+</div>
+<div class="modal-overlay" id="saveModal">
+  <div class="modal-box">
+    <div class="modal-title">Terminal output will be cleared</div>
+    <div class="modal-text">Save the terminal output before viewing the graph? You can also come back to this tab — the graph opens in a new window.</div>
+    <div class="modal-actions">
+      <button class="btn" onclick="closeSaveModal()">Cancel</button>
+      <button class="btn btn-primary" onclick="saveTerminalAndView()">Save &amp; View</button>
+      <button class="btn btn-success" onclick="justView()">Just View</button>
+    </div>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.min.js"></script>
+<script>
+let ws = null, traceId = null, isRunning = false, graphUrl = null;
+const term = new window.Terminal({
+  theme: { background:'#0a0e14', foreground:'#e0e6ed', cursor:'#00d4ff', cursorAccent:'#0a0e14',
+    selectionBackground:'rgba(0,212,255,0.2)', selectionForeground:'#e0e6ed',
+    black:'#0a0e14', red:'#ff4466', green:'#00e88f', yellow:'#ffaa33', blue:'#00d4ff',
+    magenta:'#b48eff', cyan:'#00e5c7', white:'#e0e6ed', brightBlack:'#556677',
+    brightRed:'#ff6b88', brightGreen:'#33f0a8', brightYellow:'#ffcc66', brightBlue:'#33ddff',
+    brightMagenta:'#cc99ff', brightCyan:'#33edd4', brightWhite:'#ffffff' },
+  fontFamily:"'JetBrains Mono', monospace", fontSize:13, lineHeight:1.3,
+  cursorBlink:false, cursorStyle:'bar', scrollback:10000, convertEol:true,
+});
+const fitAddon = new window.FitAddon.FitAddon();
+term.loadAddon(fitAddon);
+term.loadAddon(new window.WebLinksAddon.WebLinksAddon());
+term.open(document.getElementById('terminal'));
+fitAddon.fit();
+writeBanner();
+window.addEventListener('resize', () => fitAddon.fit());
+
+function writeBanner() {
+  term.writeln('\x1b[38;2;0;212;255m┌──────────────────────────────────────────┐\x1b[0m');
+  term.writeln('\x1b[38;2;0;212;255m│\x1b[0m  \x1b[1;38;2;0;212;255mfibtrace\x1b[0;38;2;85;102;119m.web\x1b[0m                            \x1b[38;2;0;212;255m│\x1b[0m');
+  term.writeln('\x1b[38;2;0;212;255m│\x1b[0m  \x1b[38;2;136;153;170mForwarding chain walker\x1b[0m                 \x1b[38;2;0;212;255m│\x1b[0m');
+  term.writeln('\x1b[38;2;0;212;255m└──────────────────────────────────────────┘\x1b[0m');
+  term.writeln('');
+  term.writeln('\x1b[38;2;85;102;119m  Configure parameters and click Run Trace.  Ctrl+Enter to run.\x1b[0m');
+  term.writeln('');
+}
+function clearTerminal() {
+  term.clear(); writeBanner();
+  document.getElementById('btnGraph').style.display='none';
+  graphUrl=null;
+  document.getElementById('btnViewer').classList.remove('btn-disabled');
+}
+function richToAnsi(t) {
+  return t.replace(/\[#([0-9a-fA-F]{6})\]/g, (_,h) => {
+    return `\x1b[38;2;${parseInt(h.substring(0,2),16)};${parseInt(h.substring(2,4),16)};${parseInt(h.substring(4,6),16)}m`;
+  }).replace(/\[bold\]/g,'\x1b[1m').replace(/\[\/\]/g,'\x1b[0m').replace(/\[\/bold\]/g,'\x1b[22m');
+}
+
+function startTrace() {
+  const prefix=document.getElementById('prefix').value.trim();
+  const source=document.getElementById('source').value.trim();
+  const sshUser=document.getElementById('sshUser').value.trim();
+  if (!prefix||!source||!sshUser) { term.writeln('\x1b[38;2;255;68;102m  ✗ Prefix, Source, and SSH Username are required.\x1b[0m'); return; }
+  const params = { prefix, source, username:sshUser,
+    password:document.getElementById('sshPass').value,
+    key_file:document.getElementById('keyFile').value.trim()||null,
+    nh_source:document.getElementById('nhSource').value,
+    domain:document.getElementById('domain').value.trim()||null,
+    verbose:document.getElementById('verbose').checked,
+    legacy_ssh:document.getElementById('legacySsh').checked,
+    skip_mac:document.getElementById('skipMac').checked,
+    max_depth:parseInt(document.getElementById('maxDepth').value)||15,
+    timeout:parseFloat(document.getElementById('timeout').value)||10,
+    error_threshold:parseInt(document.getElementById('errorThreshold').value)||100,
+    debug:document.getElementById('debug').checked,
+  };
+  setRunning(true);
+  document.getElementById('btnGraph').style.display='none';
+  document.getElementById('btnViewer').classList.add('btn-disabled');
+  graphUrl=null;
+  traceId=null;
+  term.writeln('');
+  term.writeln(`\x1b[38;2;0;212;255m  ▸ Starting trace: ${prefix} from ${source}\x1b[0m`);
+  term.writeln('');
+  const proto=location.protocol==='https:'?'wss:':'ws:';
+  ws=new WebSocket(`${proto}//${location.host}/ws/trace`);
+  ws.onopen=()=>{ ws.send(JSON.stringify({type:'start_trace',params})); };
+  ws.onmessage=(event)=>{
+    const msg=JSON.parse(event.data);
+    switch(msg.type){
+      case 'trace_started': traceId=msg.trace_id; break;
+      case 'output': if(msg.stream==='stderr') term.write(richToAnsi(msg.data)); break;
+      case 'trace_done':
+        term.writeln('');
+        if(msg.exit_code===0){
+          term.writeln('\x1b[38;2;0;232;143m  ✓ Trace complete\x1b[0m');
+          if(msg.has_graph){
+            term.writeln('\x1b[38;2;136;153;170m  Graph ready — click the link below the Run button.\x1b[0m');
+            graphUrl=`/graph/${msg.trace_id}`;
+            const btn=document.getElementById('btnGraph');
+            btn.style.display='block';
+          }
+        } else {
+          term.writeln(`\x1b[38;2;255;68;102m  ✗ Trace exited with code ${msg.exit_code}\x1b[0m`);
+        }
+        term.writeln('');
+        setRunning(false);
+        break;
+      case 'error':
+        term.writeln(`\x1b[38;2;255;68;102m  ✗ Error: ${msg.data}\x1b[0m`);
+        setRunning(false);
+        break;
+    }
+  };
+  ws.onerror=()=>{ term.writeln('\x1b[38;2;255;68;102m  ✗ WebSocket error\x1b[0m'); setRunning(false); };
+  ws.onclose=()=>{ if(isRunning){term.writeln('\x1b[38;2;255;68;102m  ✗ Connection lost\x1b[0m');setRunning(false);} };
+}
+function stopTrace(){ if(ws){ws.close();ws=null;} term.writeln('\x1b[38;2;255;170;51m  ⚠ Trace cancelled\x1b[0m'); setRunning(false); }
+function setRunning(r){
+  isRunning=r;
+  document.getElementById('statusDot').className=r?'status-dot running':'status-dot idle';
+  document.getElementById('statusText').textContent=r?'Tracing...':'Ready';
+  document.getElementById('btnRun').style.display=r?'none':'';
+  document.getElementById('btnStop').style.display=r?'':'none';
+  document.querySelectorAll('.sidebar input, .sidebar select').forEach(el=>el.disabled=r);
+}
+function toggleAdvanced(){ document.getElementById('advancedSection').classList.toggle('open'); document.getElementById('advArrow').classList.toggle('open'); }
+document.addEventListener('keydown', e=>{ if(e.key==='Enter'&&e.ctrlKey&&!isRunning) startTrace(); });
+
+// ── Save modal ──
+function showSaveModal(){ document.getElementById('saveModal').classList.add('active'); }
+function closeSaveModal(){ document.getElementById('saveModal').classList.remove('active'); }
+
+function getTerminalText() {
+  const buf = term.buffer.active;
+  const lines = [];
+  for (let i = 0; i < buf.length; i++) {
+    const line = buf.getLine(i);
+    if (line) lines.push(line.translateToString(true));
+  }
+  // Trim trailing empty lines
+  while (lines.length && !lines[lines.length-1].trim()) lines.pop();
+  return lines.join('\n');
+}
+
+function saveTerminalAndView() {
+  closeSaveModal();
+  const text = getTerminalText();
+  const blob = new Blob([text], {type:'text/plain'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  const ts = new Date().toISOString().replace(/[:.]/g,'-').substring(0,19);
+  a.download = `fibtrace_${ts}.log`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  // Small delay to let download start, then open graph
+  setTimeout(()=>{ if(graphUrl) window.open(graphUrl, '_blank'); }, 200);
+}
+
+function justView() {
+  closeSaveModal();
+  if(graphUrl) window.open(graphUrl, '_blank');
+}
+</script>
+</body>
+</html>

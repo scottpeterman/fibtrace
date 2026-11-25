@@ -1,0 +1,78 @@
+/* fibtrace TUI — dark terminal aesthetic matching trafikwatch */
+
+Screen {
+    background: #0a0a0a;
+}
+
+/* ── Title bar ────────────────────────────────────────────────── */
+
+#title-bar {
+    dock: top;
+    height: 1;
+    background: #1a1a2e;
+    color: #00d4ff;
+    text-style: bold;
+    padding: 0 1;
+}
+
+/* ── Main horizontal split ────────────────────────────────────── */
+
+#main-split {
+    height: 1fr;
+    layout: horizontal;
+}
+
+/* ── Tree pane (left) ─────────────────────────────────────────── */
+
+#tree-pane {
+    width: 40%;
+    min-width: 30;
+    border-right: solid #333333;
+    padding: 0;
+}
+
+#hop-tree {
+    padding: 1 1;
+    scrollbar-size: 1 1;
+}
+
+#hop-tree > .tree--guides {
+    color: #444444;
+}
+
+#hop-tree > .tree--guides-hover {
+    color: #666666;
+}
+
+#hop-tree > .tree--cursor {
+    background: #1a1a2e;
+    color: #ffffff;
+    text-style: bold;
+}
+
+#hop-tree > .tree--highlight {
+    background: #1a1a2e;
+}
+
+/* ── Log pane (right) ─────────────────────────────────────────── */
+
+#log-pane {
+    width: 60%;
+    padding: 0;
+}
+
+#log-view {
+    height: 1fr;
+    padding: 0 1;
+    scrollbar-size: 1 1;
+}
+
+/* ── Status bar ───────────────────────────────────────────────── */
+
+#status-bar {
+    dock: bottom;
+    height: 1;
+    background: #1a1a2e;
+    color: #888888;
+    padding: 0 1;
+}

@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>fibtrace — Login</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg-deep: #0a0e14;
+    --bg-surface: #0f1419;
+    --bg-card: #141a22;
+    --bg-hover: #1a2230;
+    --border-subtle: #1e2a3a;
+    --border-medium: #2a3a4e;
+    --text-primary: #e0e6ed;
+    --text-secondary: #8899aa;
+    --text-muted: #556677;
+    --accent-blue: #00d4ff;
+    --accent-green: #00e88f;
+    --accent-red: #ff4466;
+  }
+
+  body {
+    background: var(--bg-deep);
+    color: var(--text-primary);
+    font-family: 'Outfit', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-image:
+      radial-gradient(circle at 30% 40%, rgba(0, 212, 255, 0.03) 0%, transparent 50%),
+      radial-gradient(circle at 70% 60%, rgba(0, 232, 143, 0.02) 0%, transparent 50%);
+  }
+
+  .login-card {
+    width: 380px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 12px;
+    padding: 40px 32px;
+  }
+
+  .logo {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--accent-blue);
+    letter-spacing: -0.5px;
+    text-align: center;
+    margin-bottom: 6px;
+  }
+  .logo span { color: var(--text-muted); font-weight: 400; }
+
+  .subtitle {
+    text-align: center;
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: 32px;
+  }
+
+  .field { margin-bottom: 16px; }
+  .field label {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+  .field input {
+    width: 100%;
+    padding: 10px 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .field input:focus {
+    border-color: var(--accent-blue);
+  }
+  .field input::placeholder { color: var(--text-muted); }
+
+  .btn-login {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid var(--accent-blue);
+    border-radius: 8px;
+    background: rgba(0, 212, 255, 0.1);
+    color: var(--accent-blue);
+    font-family: 'Outfit', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-top: 8px;
+  }
+  .btn-login:hover {
+    background: rgba(0, 212, 255, 0.2);
+    box-shadow: 0 0 20px rgba(0, 212, 255, 0.1);
+  }
+
+  .error {
+    padding: 10px 14px;
+    background: rgba(255, 68, 102, 0.08);
+    border: 1px solid rgba(255, 68, 102, 0.25);
+    border-radius: 8px;
+    color: var(--accent-red);
+    font-size: 13px;
+    margin-bottom: 16px;
+  }
+</style>
+</head>
+<body>
+
+<div class="login-card">
+  <div class="logo">fibtrace<span>.web</span></div>
+  <div class="subtitle">Forwarding chain validation</div>
+
+  {% if error %}
+  <div class="error">{{ error }}</div>
+  {% endif %}
+
+  <form method="post" action="/login">
+    <div class="field">
+      <label>Username</label>
+      <input type="text" name="username" placeholder="username" autocomplete="username" autofocus required>
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input type="password" name="password" placeholder="••••••••" autocomplete="current-password" required>
+    </div>
+    <button type="submit" class="btn-login">Sign In</button>
+  </form>
+</div>
+
+</body>
+</html>
